@@ -21,21 +21,19 @@ class Maze:
         self.num_items = len(item_channels)
         self.channels = torch.stack(self.channels, 0)
         self.item_channels = self.channels[1:]
+        self.original_state = self.channels.clone()
+
+    def reset(self):
+        self.channels.copy_(self.original_state)
 
 class World:
-    def __init__(self, maze, agent):
+    def __init__(self, maze, agent, random_seed=1):
         self.maze = maze
-        self.original_maze = copy.deepcopy(maze)
         self.agent = agent
         self._action_space = Discrete(4 + 1)
         self._state_space = Box(0.0, 1.0, (1 + 1 + maze.num_items, self.maze.height, self.maze.width))
-
-    def init_agent(self, x, y):
-        assert self.maze.walls[x, y] == 0 # cannot place agent on a wall space
-        self.agent.position = torch.zeros(self.maze.walls.size())
-        self.agent.position[x, y] = 1
-        self.agent.x = x
-        self.agent.y = y
+        self.seed = random_seed
+        np.random.seed(random_seed)
 
     def step(self, action):
         self.on_step += 1
@@ -48,11 +46,10 @@ class World:
         elif action == 3:
             self.agent.move('right', self.maze)
         elif action == 4:
-            self.agent.grab(self.maze)
+            self.agent.eat(self.maze)
         else:
             raise ValueError('Action out of bounds')
         self.state = torch.cat([self.agent.position.unsqueeze(0), self.maze.channels], 0)
-
 
     def action_space(self):
         return self._action_space
@@ -62,17 +59,25 @@ class World:
 
     def reset(self):
         self.on_step = 0
-        self.init_agent(6, 6)
+        self.maze.reset()
+        while True:
+            x = np.random.randint(0, self.maze.width)
+            y = np.random.randint(0, self.maze.height)
+            print('{}, {}'.format(x, y))
+            if self.agent.is_valid_position(self.maze, x, y):
+                self.agent.reset(self.maze, x, y)
+                break
         self.state = torch.cat([self.agent.position.unsqueeze(0), self.maze.channels], 0)
 
 class Task:
-    def __init__(self, bump=-2, move=0, empty_handed=-1, apple=5, orange=20, pear=-10):
+    def __init__(self, episode_length=30, bump=-2, move=0, empty_handed=-1, apple=5, orange=20, pear=-10):
         self.bump=bump
         self.move=move
         self.apple=apple
         self.orange=orange
         self.pear=pear
         self.empty_handed=empty_handed
+        self.episode_length=episode_length
 
     def reward(self, world):
         if world.agent.action_type == 'move':
@@ -90,7 +95,7 @@ class Task:
             else: return self.empty_handed
 
     def finished(self,world):
-        done = (world.on_step == 50)
+        done = (world.on_step == self.episode_length)
         return done
 
 
@@ -118,7 +123,6 @@ class Agent:
             self.y = candidate_y
 
     def eat(self, maze):
-
         self.action_type = 'eat'
         for idx, channel in enumerate(maze.item_channels):
             if channel[self.x, self.y]:
@@ -127,6 +131,16 @@ class Agent:
                 return idx
         self.last_meal = None
         return None
+
+    def is_valid_position(self, maze, x, y):
+        return maze.walls[x, y] == 0 # cannot place agent on a wall space
+
+    def reset(self, maze, x, y):
+        assert self.is_valid_position(maze, x, y)
+        self.position = torch.zeros(maze.walls.size())
+        self.position[x, y] = 1
+        self.x = x
+        self.y = y
 
 class Env(gym.Env):
     '''
@@ -156,7 +170,7 @@ class Env(gym.Env):
 
 
 class MazeEnv1(Env):
-    def __init__(self):
+    def __init__(self, episode_length=10):
         walls = tensor_from_list([
         [1, 1, 1, 1, 1, 1, 1, 1],
         [1, 0, 0, 0, 1, 0, 0, 1],
@@ -182,5 +196,8 @@ class MazeEnv1(Env):
         maze = Maze(walls, apples, oranges, pears)
         agent = Agent()
         world = World(maze, agent)
-        reward = Task()
+        reward = Task(episode_length)
         super().__init__(world, reward)
+
+env = MazeEnv1(episode_length=10)
+import ipdb; ipdb.set_trace()
