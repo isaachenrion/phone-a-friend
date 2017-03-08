@@ -1,2 +1,2 @@
 
-from .maze import MazeEnv1, OneApple
+from .maze_envs import *
