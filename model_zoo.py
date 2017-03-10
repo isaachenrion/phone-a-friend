@@ -12,7 +12,7 @@ class Module(nn.Module):
         self.action_size = action_size
         self.n_friends = n_friends
         self.temperature = temperature
-        self.disallowed_actions = disallowed_actions
+        self.disallowed_actions = disallowed_actions if disallowed_actions is not None else []
         self.mask = torch.eye(action_size, action_size)
 
         self.num_features = 1
@@ -31,7 +31,7 @@ class Module(nn.Module):
             num_features *= s
         return num_features
 
-    def forward(self, x):
+    def forward(self, *args):
         pass
 
 class FCNet(Module):
@@ -59,7 +59,32 @@ class FCNet(Module):
             advice = advice.view(-1, self.num_flat_features(advice))
             advice = self.fc3a(advice)
             x += advice
+        x_, _ = x.max(1)
+        x_ = x_.expand_as(x)
+        x -= x_
         x = torch.mm(F.softmax(x / self.temperature), Variable(self.mask))
+        return x
+
+
+class BaselineNet(Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
+        self.bn1   = nn.BatchNorm1d(120)
+        self.fc2   = nn.Linear(120, 84)
+        self.bn2   = nn.BatchNorm1d(84)
+        self.fc3   = nn.Linear(84, self.action_size)
+
+    def zero_(self, batch_size=None):
+        pass
+
+    def forward(self, x, advice=None):
+        x = x.view(-1, self.num_flat_features(x))
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.fc2(x)))
+        x = self.fc3(x)
+        x = x.view(-1, self.num_flat_features(x))
         return x
 
 class Net(Module):
@@ -105,19 +130,19 @@ class Model(nn.Module):
     def zero_(self, batch_size=None):
         pass
 
-    def forward(self, x):
-        return self.neural_net.forward(x)
+    def forward(self, *args):
+        return self.neural_net.forward(*args)
 
 class RecurrentNet(Module):
     def __init__(self, hidden_size, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
 
-        self.conv1 = nn.Conv2d(input_size[0], 6, 3, padding=1) # 1 input image channel, 6 output channels, 5x5 square convolution kernel
+        self.conv1 = nn.Conv2d(self.input_size[0], 6, 3, padding=1) # 1 input image channel, 6 output channels, 5x5 square convolution kernel
         self.conv2 = nn.Conv2d(6, 16, 3, padding=1)
         self.fc1   = nn.Linear(16*8*8, 120) # an affine operation: y = Wx + b
         self.fc2   = nn.Linear(120, 84)
-        if n_friends:
+        if self.n_friends:
             self.fc3a  = nn.Linear(self.n_friends * (self.action_size - self.n_friends), 84)
 
         self.gru = nn.GRUCell(input_size=84, hidden_size=hidden_size)

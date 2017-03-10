@@ -7,7 +7,7 @@ from gym.utils import seeding
 from gym.spaces import Discrete, Box
 from .utils import tensor_from_list
 
-from constants import *
+from constants import Constants as C
 
 
 
@@ -36,8 +36,9 @@ class Maze:
         if self.random_items is not None:
             self.item_channels.zero_()
             for channel, count in zip(self.item_channels, self.random_items):
-                x, y = self.get_random_valid_position()
-                channel[x, y] += 1
+                for _ in range(count):
+                    x, y = self.get_random_valid_position()
+                    channel[x, y] += 1
 
     def is_valid_position(self, x, y):
         return self.walls[x, y] == 0 # cannot place agent on a wall space
@@ -67,7 +68,15 @@ class World:
         self.on_step += 1
         self.agent.act(action, self.maze)
         self.state = [torch.cat([self.agent.channels, self.maze.channels], 0)]
+        #self.get_distance_from_goal()
         if self.agent.advice is not None: self.state += [self.agent.advice]
+
+    def get_distance_from_goal(self):
+        x_agent = self.agent.x
+        y_agent = self.agent.y
+        x, y = np.where(self.maze.exits.numpy()==1)
+        x, y = x[0], y[0]
+        return np.exp(-((x_agent - x) ** 2 + (y_agent - y) ** 2))
 
     def action_space(self):
         return self._action_space
@@ -93,7 +102,8 @@ class World:
 
 
 class Task:
-    def __init__(self, bump, move, rest, empty_handed, apple, orange, pear, quit, call_costs):
+    def __init__(self, time_incentive, bump, move, rest, empty_handed, apple, orange, pear, quit, call_costs):
+        self.time_incentive = time_incentive
         self.bump=bump
         self.move=move
         self.rest=rest
@@ -107,30 +117,33 @@ class Task:
     def reward(self, world):
         if world.agent.action_type == 'move':
             if world.agent.bump:
-                return self.bump
-            else: return self.move
+                r = self.bump
+            else: r = self.move
         elif world.agent.action_type == 'eat':
             if world.agent.last_meal is not None:
                 if world.agent.last_meal == 0:
-                    return self.apple
+                    r = self.apple
                 elif world.agent.last_meal == 1:
-                    return self.orange
+                    r = self.orange
                 elif world.agent.last_meal == 2:
-                    return self.pear
-            else: return self.empty_handed
+                    r = self.pear
+            else: r = self.empty_handed
         elif world.agent.action_type == 'rest':
-            return self.rest
+            r = self.rest
         elif world.agent.action_type == 'quit':
             if self.finished(world):
-                return self.quit
+                r = self.quit
             else:
-                return self.rest
+                r = self.rest
         elif world.agent.action_type == 'phone_friend':
-            return self.call_costs[world.agent.friend_id]
+            r = self.call_costs[world.agent.friend_id]
+        r += self.time_incentive
+        #r += world.get_distance_from_goal()
+        return r
 
 
     def finished(self,world):
-        done = ((world.maze.item_channels.sum() == 0) or \
+        done = ((world.maze.item_channels.sum() == 0) and \
                 (not world.agent.playing))
         return done
 
@@ -146,7 +159,7 @@ class Agent:
         self.friends = friends
         self.advice = None
         self.num_channels = 1 + len(self.friends)
-        self.num_basic_actions = NUM_BASIC_ACTIONS
+        self.num_basic_actions = C.NUM_BASIC_ACTIONS
 
     def reset_states(self):
         self.bump = None
@@ -275,14 +288,15 @@ class MazeEnv(Env):
         maze = Maze(walls, exits, item_channels, random_items=random_items)
         agent = Agent(friends)
         world = World(maze, agent)
-        reward = Task(bump= BUMP,
-                      move= MOVE,
-                      rest= REST,
-                      empty_handed= EMPTY_HANDED,
-                      apple=APPLE,
-                      orange=ORANGE,
-                      pear= PEAR,
-                      quit= QUIT,
-                      call_costs=[CALL_COST] * len(friends))
+        reward = Task(time_incentive = C.TIME_INCENTIVE,
+                      bump= C.BUMP,
+                      move= C.MOVE,
+                      rest= C.REST,
+                      empty_handed= C.EMPTY_HANDED,
+                      apple=C.APPLE,
+                      orange=C.ORANGE,
+                      pear= C.PEAR,
+                      quit= C.QUIT,
+                      call_costs=[C.CALL_COST] * len(friends))
         self.size = (world.num_channels, maze.width, maze.height)
         super().__init__(world, reward)
