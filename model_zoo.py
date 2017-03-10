@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-
+from constants import Constants as C
 from torch.autograd import Variable
 #===================================================================== CREATION OF THE POLICY =============================================
 # Creation of a learning model Q(s): R^N -> R^A
@@ -34,6 +34,9 @@ class Module(nn.Module):
     def forward(self, *args):
         pass
 
+    def zero_(self, batch_size=None):
+        pass
+
 class FCNet(Module):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -45,9 +48,6 @@ class FCNet(Module):
         self.fc3   = nn.Linear(84, self.action_size)
         if self.n_friends:
             self.fc3a  = nn.Linear(self.n_friends * (self.action_size - self.n_friends), self.action_size)
-
-    def zero_(self, batch_size=None):
-        pass
 
     def forward(self, x, advice=None):
         x = x.view(-1, self.num_flat_features(x))
@@ -87,7 +87,7 @@ class BaselineNet(Module):
         x = x.view(-1, self.num_flat_features(x))
         return x
 
-class Net(Module):
+class ConvNet(Module):
     def __init__(self, *args, **kwargs):
         super(Net, self).__init__(*args, **kwargs)
         self.conv1 = nn.Conv2d(input_size[0], 6, 3, padding=1) # 1 input image channel, 6 output channels, 5x5 square convolution kernel
@@ -122,10 +122,11 @@ class Net(Module):
 
 
 class Model(nn.Module):
-    def __init__(self, batch_size, neural_net):
+    def __init__(self, batch_size, neural_net, filename=None):
         super().__init__()
         self.neural_net = neural_net
         self.batch_size = batch_size
+        self.filename = filename
 
     def zero_(self, batch_size=None):
         pass
@@ -133,7 +134,7 @@ class Model(nn.Module):
     def forward(self, *args):
         return self.neural_net.forward(*args)
 
-class RecurrentNet(Module):
+class RecurrentConvNet(Module):
     def __init__(self, hidden_size, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
@@ -171,6 +172,45 @@ class RecurrentNet(Module):
         # output probability distribution over actions
         output = F.softmax(self.fc3(h) / self.temperature)
         return output, h
+
+
+class RecurrentNet(Module):
+    def __init__(self, hidden_size, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hidden_size = hidden_size
+
+        gru_input_size = 84
+        self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
+        self.bn1   = nn.BatchNorm1d(120)
+        self.fc2   = nn.Linear(120, gru_input_size)
+        self.bn2   = nn.BatchNorm1d(gru_input_size)
+        if self.n_friends:
+            advice_input_size = self.n_friends * C.NUM_BASIC_ACTIONS
+            advice_output_size = 20
+            #self.fc3a  = nn.Linear(advice_input_size, advice_output_size)
+            gru_input_size += advice_output_size
+            self.advice_gru = nn.GRUCell(input_size=advice_input_size, hidden_size=advice_output_size)
+
+        self.gru = nn.GRUCell(input_size=gru_input_size, hidden_size=hidden_size)
+        self.fc3   = nn.Linear(hidden_size, self.action_size)
+
+
+    def forward(self, x, h, advice=None):
+        #if advice.data.sum() > 0: import ipdb; ipdb.set_trace()
+        x = x.view(-1, self.num_flat_features(x))
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.fc2(x)))
+
+        if self.n_friends:
+            advice = advice.view(-1, self.num_flat_features(advice))
+            advice = self.fc3a(advice)
+            # recurrent part
+            h = self.advice_gru(advice, h)
+
+        # output probability distribution over actions
+        output = torch.mm(F.softmax(self.fc3(h) / self.temperature), Variable(self.mask))
+        return output, h
+
 
 class RecurrentModel(Model):
     def __init__(self, batch_size, neural_net):

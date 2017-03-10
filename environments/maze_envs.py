@@ -115,6 +115,27 @@ class ApplesEverywhere(MazeEnv):
         super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
 
 
+class NavigateOnly(MazeEnv):
+    def __init__(self, **kwargs):
+        walls = tensor_from_list([
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 0, 1],
+        [1, 0, 1, 0, 1, 0, 0, 1],
+        [1, 0, 1, 0, 1, 1, 0, 1],
+        [1, 0, 1, 0, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 0, 0, 1],
+        [1, 0, 1, 0, 1, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1]]
+        ).float()
+
+        exits = torch.zeros(walls.size()).float()
+        apples = torch.zeros(walls.size()).float()
+        oranges = torch.zeros(walls.size()).float()
+        pears = torch.zeros(walls.size()).float()
+
+        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+
+
 class EasyExit(MazeEnv):
     def __init__(self, **kwargs):
         walls = tensor_from_list([

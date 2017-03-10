@@ -53,10 +53,7 @@ class World:
     def __init__(self, maze, agent, random_seed=1):
         self.maze = maze
         self.agent = agent
-        num_actions = 4 # directions
-        num_actions += 1 # eat
-        num_actions += 1 # rest
-        num_actions += 1 # quit
+        num_actions = C.NUM_BASIC_ACTIONS
         num_actions += len(agent.friends) # friends to call
         self._action_space = Discrete(num_actions)
         self.num_channels = agent.num_channels + maze.num_channels
@@ -121,6 +118,7 @@ class Task:
             else: r = self.move
         elif world.agent.action_type == 'eat':
             if world.agent.last_meal is not None:
+                #print(world.agent.last_meal)
                 if world.agent.last_meal == 0:
                     r = self.apple
                 elif world.agent.last_meal == 1:
@@ -143,13 +141,13 @@ class Task:
 
 
     def finished(self,world):
-        done = ((world.maze.item_channels.sum() == 0) and \
-                (not world.agent.playing))
+        done = (world.maze.item_channels.sum() == 0)
+                #and (not world.agent.playing))
         return done
 
 
 class Agent:
-    def __init__(self, friends=[]):
+    def __init__(self, friends=[], disallowed_actions=[]):
         self.channels = None
         self.x = self.y = None
         self.direction_dict = {'down': [1, 0],
@@ -157,8 +155,9 @@ class Agent:
                                 'left': [0, -1],
                                 'right': [0, 1]}
         self.friends = friends
+        self.disallowed_actions = disallowed_actions
         self.advice = None
-        self.num_channels = 1 + len(self.friends)
+        self.num_channels = 1 #+ len(self.friends)
         self.num_basic_actions = C.NUM_BASIC_ACTIONS
 
     def reset_states(self):
@@ -166,9 +165,14 @@ class Agent:
         self.playing = True
         self.last_meal = None
 
-    def act(self, action, maze):
-        if len(self.friends):
-            self.advice.fill_(0)
+    def act(self, action, maze, constant_advice=C.CONSTANT_ADVICE):
+        if len(self.friends) and constant_advice:
+            for idx in range(self.num_basic_actions, self.num_basic_actions + len(self.friends)):
+                advice = self.phone_friend(idx - self.num_basic_actions, maze)
+
+        self.reset_states()
+        if action in disallowed_actions:
+            raise ValueError("Bad action! ({})".format(action))
         if action == 0:
             self.move('up', maze)
         elif action == 1:
@@ -183,10 +187,12 @@ class Agent:
             self.rest()
         elif action == 6:
             self.quit(maze)
-        elif action > 6:
-            index = action - 7
+        elif action >= self.num_basic_actions:
+            index = action - self.num_basic_actions
             advice = self.phone_friend(index, maze)
-            self.act(advice, maze)
+
+            #import ipdb; ipdb.set_trace()
+            #self.act(advice, maze, on_advice=True)
             self.action_type = 'phone_friend'
         else:
             raise ValueError('Action out of bounds')
@@ -232,10 +238,11 @@ class Agent:
             friend = self.friends[friend_id]
             friend.observe(state)
             self.friend_id = friend_id
-            advice = friend.sample().data[0, 0]
-            assert advice < self.num_basic_actions
-            self.advice[friend_id, advice] = 1
-            return advice
+            advice, advice_probs = friend.sample()
+            assert advice.data[0, 0] < self.num_basic_actions
+            self.advice[friend_id] = advice_probs.data
+            #import ipdb; ipdb.set_trace()
+            return advice.data[0, 0]
         except TypeError:
             pass
 
@@ -284,9 +291,11 @@ class Env(gym.Env):
 
 
 class MazeEnv(Env):
-    def __init__(self, walls, exits, item_channels, random_items=None, friends=[]):
+    def __init__(self, walls, exits, item_channels, random_items=None, friends=[], disallowed_actions=[]):
+        self.friends = friends
+        self.disallowed_actions = disallowed_actions
         maze = Maze(walls, exits, item_channels, random_items=random_items)
-        agent = Agent(friends)
+        agent = Agent(friends, disallowed_actions)
         world = World(maze, agent)
         reward = Task(time_incentive = C.TIME_INCENTIVE,
                       bump= C.BUMP,
