@@ -171,7 +171,7 @@ class Agent:
                 advice = self.phone_friend(idx - self.num_basic_actions, maze)
 
         self.reset_states()
-        if action in disallowed_actions:
+        if action in self.disallowed_actions:
             raise ValueError("Bad action! ({})".format(action))
         if action == 0:
             self.move('up', maze)

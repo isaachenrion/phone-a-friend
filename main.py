@@ -177,11 +177,12 @@ from environments.env_list import ENVS
 Env = ENVS[args.env]
 print("Environment: {}".format(Env.__name__))
 
-disallowed_actions=[5, 6, 7]
+#disallowed_actions=[5, 6, 7]
+disallowed_actions = []
 envs=[Env(friends=friends, disallowed_actions=disallowed_actions) for _ in range(args.batch_size)]
 A = envs[0].action_space.n
 state_size = envs[0].size
-print("Number of Actions is: {}".format(A)
+print("Number of Actions is: {}".format(A))
 print("State size is {} x {} x {}".format(*state_size))
 
 ''' BUILD MODEL '''
@@ -189,7 +190,7 @@ baseline_net = BaselineNet(state_size, 1)
 baseline_model = Model(args.batch_size, baseline_net)
 
 if args.recurrent:
-    action_net = RecurrentNet(100, state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions)
+    action_net = RecurrentNet(300, state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions)
     action_model = RecurrentModel(args.batch_size, action_net)
 else:
     action_net = FCNet(state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions)

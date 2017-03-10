@@ -179,34 +179,30 @@ class RecurrentNet(Module):
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
 
-        gru_input_size = 84
-        self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
-        self.bn1   = nn.BatchNorm1d(120)
-        self.fc2   = nn.Linear(120, gru_input_size)
-        self.bn2   = nn.BatchNorm1d(gru_input_size)
+        input_size = self.num_features
+        #self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
+        #self.bn1   = nn.BatchNorm1d(120)
+        #self.fc2   = nn.Linear(120, gru_input_size)
+        #self.bn2   = nn.BatchNorm1d(gru_input_size)
         if self.n_friends:
-            advice_input_size = self.n_friends * C.NUM_BASIC_ACTIONS
-            advice_output_size = 20
-            #self.fc3a  = nn.Linear(advice_input_size, advice_output_size)
-            gru_input_size += advice_output_size
-            self.advice_gru = nn.GRUCell(input_size=advice_input_size, hidden_size=advice_output_size)
+            input_size += n_friends * C.NUM_BASIC_ACTIONS
 
-        self.gru = nn.GRUCell(input_size=gru_input_size, hidden_size=hidden_size)
+        self.gru = nn.GRUCell(input_size=input_size, hidden_size=hidden_size)
+
         self.fc3   = nn.Linear(hidden_size, self.action_size)
 
 
     def forward(self, x, h, advice=None):
         #if advice.data.sum() > 0: import ipdb; ipdb.set_trace()
         x = x.view(-1, self.num_flat_features(x))
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = F.relu(self.bn2(self.fc2(x)))
+        #x = F.relu(self.bn1(self.fc1(x)))
+        #x = F.relu(self.bn2(self.fc2(x)))
 
         if self.n_friends:
             advice = advice.view(-1, self.num_flat_features(advice))
-            advice = self.fc3a(advice)
-            # recurrent part
-            h = self.advice_gru(advice, h)
+            x = torch.cat([x, advice], 1)
 
+        h = self.gru(x, h)
         # output probability distribution over actions
         output = torch.mm(F.softmax(self.fc3(h) / self.temperature), Variable(self.mask))
         return output, h
