@@ -71,9 +71,6 @@ class Experiment:
                 if k not in garbage:
                     write_and_log(k, v, f, log)
 
-
-
-
     def print_train(self):
         out_str = "Reward = {} (length = {})".format(self.log.get_last_dynamic_value("avg_total_reward"),self.log.get_last_dynamic_value("avg_length"))
         if self.args.debug:
@@ -143,29 +140,33 @@ parser.add_argument('--env', '-m', type=int, default=0,
 parser.add_argument('--model_dir', type=str, default=C.MODEL_DIR)
 parser.add_argument('--n_train_steps', '-n', type=int, default=1000, metavar='N',
                     help='number of epochs to train (default: 10)')
-parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
+parser.add_argument('--lr', type=float, default=0.0005, metavar='LR',
                     help='learning rate (default: 0.001)')
 parser.add_argument('--debug','-d', action='store_true')
 parser.add_argument('--recurrent','-r', action='store_true')
-parser.add_argument('--entropy_term', '-z', type=float, default=0.01)
+parser.add_argument('--entropy_term', '-z', type=float, default=1)
 parser.add_argument('--clip', '-c', action='store_true')
 parser.add_argument('--use_friends', '-f', action='store_true')
 parser.add_argument('--epsilon', '-e', type=float, default=0.1)
+parser.add_argument('--load', '-l', type=str, default=None)
+parser.add_argument('--bn', action='store_true')
 args = parser.parse_args()
 
 '''LOAD FRIENDS'''
 model_strs = []
 if args.use_friends:
-    #model_strs.append('Mar-10___11-02-01-NoWalls.ckpt')
-    model_strs.append('Mar-10___15-53-37-RandomApple.ckpt')
-    model_strs.append('Mar-10___15-41-14-RandomOrange.ckpt')
-    model_strs.append('Mar-10___15-50-53-RandomPear.ckpt')
+    #model_strs.append('Mar-14___15-00-11-RandomApple.ckpt')
+    #model_strs.append('Mar-14___15-22-57-RandomOrange.ckpt')
+    #model_strs.append('Mar-10___15-41-14-RandomOrange.ckpt')
+    model_strs.append('Mar-14___15-23-34-RandomPear.ckpt') # FF
+    model_strs.append('Mar-14___18-58-54-RandomPear.ckpt') # REC
 for s in model_strs:
     print("Loaded friend: {}".format(s))
 friends = []
 for model_str in model_strs:
     filename = os.path.join(args.model_dir, model_str)
     friend_model = Model(1, torch.load(filename), filename)
+    friend_model.eval()
     friend = DiscreteModelPolicy(Discrete(C.NUM_BASIC_ACTIONS), friend_model, disallowed_actions=[act for act in range(C.NUM_BASIC_ACTIONS, C.NUM_BASIC_ACTIONS+len(model_strs))])
     friends.append(friend)
 
@@ -190,11 +191,19 @@ baseline_net = BaselineNet(state_size, 1)
 baseline_model = Model(args.batch_size, baseline_net)
 
 if args.recurrent:
-    action_net = RecurrentNet(300, state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions)
+    action_net = RecurrentNet(50, state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions, bn=args.bn)
     action_model = RecurrentModel(args.batch_size, action_net)
 else:
-    action_net = FCNet(state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions)
+    action_net = FCNet(state_size, A, n_friends=len(friends), disallowed_actions=disallowed_actions, bn=args.bn)
     action_model = Model(args.batch_size, action_net)
+
+if args.load is not None:
+    print("Loading model: {}".format(args.load))
+    filename = os.path.join(args.model_dir, args.load)
+    if args.recurrent:
+        action_model = RecurrentModel(1, torch.load(filename), filename)
+    else:
+        action_model = Model(1, torch.load(filename), filename)
 
 print("Action model: {}".format(action_net))
 print("Baseline model: {}".format(baseline_net))
@@ -202,8 +211,14 @@ print("Baseline model: {}".format(baseline_net))
 policy = DiscreteModelPolicy(envs[0].action_space, action_model, stochastic=True, disallowed_actions=disallowed_actions, baseline_model=baseline_model)
 policy = DiscreteEpsilonGreedyPolicy(envs[0].action_space, epsilon=args.epsilon, policy=policy)
 optimizer= optim.Adam(policy.parameters(), lr=args.lr)
+#optimizer= optim.RMSprop(policy.parameters(), lr=args.lr)
+#optimizer = optim.SGD(policy.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
 
 ''' RUN EXPERIMENT '''
 print("Running experiment...")
 experiment = Experiment(policy, optimizer, envs, n_train_steps=1000, eval_freq=10, save_freq=50, num_observations=num_observations, args=args)
-experiment.run()
+try:
+    experiment.run()
+except KeyboardInterrupt:
+    # quit
+    sys.exit()

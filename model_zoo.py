@@ -39,29 +39,42 @@ class Module(nn.Module):
 
 class FCNet(Module):
     def __init__(self, *args, **kwargs):
+        self.bn = kwargs.pop('bn', False)
         super().__init__(*args, **kwargs)
+        fc1_dim = 200
+        fc2_dim = 200
+        fc3_dim = self.action_size
+        self.fc1   = nn.Linear(self.num_features, fc1_dim) # an affine operation: y = Wx + b
+        if self.bn:
+            self.bn1   = nn.BatchNorm1d(fc1_dim)
+        self.fc2   = nn.Linear(fc1_dim, fc2_dim)
+        if self.bn:
+            self.bn2   = nn.BatchNorm1d(fc2_dim)
+        self.fc3   = nn.Linear(fc2_dim + self.n_friends * (self.action_size - self.n_friends), fc3_dim)
 
-        self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
-        self.bn1   = nn.BatchNorm1d(120)
-        self.fc2   = nn.Linear(120, 84)
-        self.bn2   = nn.BatchNorm1d(84)
-        self.fc3   = nn.Linear(84, self.action_size)
         if self.n_friends:
-            self.fc3a  = nn.Linear(self.n_friends * (self.action_size - self.n_friends), self.action_size)
+            self.fc3a  = nn.Linear(self.n_friends * (self.action_size - self.n_friends), fc3_dim)
 
     def forward(self, x, advice=None):
         x = x.view(-1, self.num_flat_features(x))
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = F.relu(self.bn2(self.fc2(x)))
-        x = self.fc3(x)
+        if self.bn:
+            x = F.relu(self.bn1(self.fc1(x)))
+        else:
+            x = F.relu(self.fc1(x))
+        if self.bn:
+            x = F.relu(self.bn2(self.fc2(x)))
+        else:
+            x = F.relu(self.fc2(x))
 
         if self.n_friends:
             advice = advice.view(-1, self.num_flat_features(advice))
-            advice = self.fc3a(advice)
-            x += advice
-        x_, _ = x.max(1)
-        x_ = x_.expand_as(x)
-        x -= x_
+            x = torch.cat([advice, x], 1)
+            #if advice.data.sum() > 0:
+            #    import ipdb; ipdb.set_trace()
+            #import ipdb; ipdb.set_trace()
+            #advice = self.fc3a(advice)
+        x = self.fc3(x)
+
         x = torch.mm(F.softmax(x / self.temperature), Variable(self.mask))
         return x
 
@@ -84,7 +97,7 @@ class BaselineNet(Module):
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
         x = self.fc3(x)
-        x = x.view(-1, self.num_flat_features(x))
+        x = x.view(-1)
         return x
 
 class ConvNet(Module):
@@ -176,18 +189,22 @@ class RecurrentConvNet(Module):
 
 class RecurrentNet(Module):
     def __init__(self, hidden_size, *args, **kwargs):
+
+        self.bn = kwargs.pop('bn', False)
         super().__init__(*args, **kwargs)
         self.hidden_size = hidden_size
-
         input_size = self.num_features
-        #self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
-        #self.bn1   = nn.BatchNorm1d(120)
+        if self.n_friends:
+            input_size += self.n_friends * C.NUM_BASIC_ACTIONS
+
+        fc1_dim = 100
+        self.fc1   = nn.Linear(input_size, fc1_dim) # an affine operation: y = Wx + b
+        if self.bn:
+            self.bn1   = nn.BatchNorm1d(fc1_dim)
         #self.fc2   = nn.Linear(120, gru_input_size)
         #self.bn2   = nn.BatchNorm1d(gru_input_size)
-        if self.n_friends:
-            input_size += n_friends * C.NUM_BASIC_ACTIONS
 
-        self.gru = nn.GRUCell(input_size=input_size, hidden_size=hidden_size)
+        self.gru = nn.GRUCell(input_size=fc1_dim, hidden_size=hidden_size)
 
         self.fc3   = nn.Linear(hidden_size, self.action_size)
 
@@ -195,12 +212,15 @@ class RecurrentNet(Module):
     def forward(self, x, h, advice=None):
         #if advice.data.sum() > 0: import ipdb; ipdb.set_trace()
         x = x.view(-1, self.num_flat_features(x))
-        #x = F.relu(self.bn1(self.fc1(x)))
-        #x = F.relu(self.bn2(self.fc2(x)))
-
         if self.n_friends:
             advice = advice.view(-1, self.num_flat_features(advice))
             x = torch.cat([x, advice], 1)
+
+        if self.bn:
+            x = F.relu(self.bn1(self.fc1(x)))
+        else:
+            x = F.relu(self.fc1(x))
+        #x = F.relu(self.bn2(self.fc2(x)))
 
         h = self.gru(x, h)
         # output probability distribution over actions
@@ -209,9 +229,9 @@ class RecurrentNet(Module):
 
 
 class RecurrentModel(Model):
-    def __init__(self, batch_size, neural_net):
-        super().__init__(batch_size, neural_net)
-        self.h = torch.zeros(batch_size, neural_net.hidden_size)
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.h = torch.zeros(self.batch_size, self.neural_net.hidden_size)
 
     def zero_(self, batch_size=None):
         if batch_size is not None:

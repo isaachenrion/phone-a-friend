@@ -1,15 +1,19 @@
 import torch
 import numpy as np
 import copy
+import sys, os
+sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath('../..'))
 
 import gym
 from gym.utils import seeding
 from gym.spaces import Discrete, Box
-from .utils import tensor_from_list
+try:
+    from .utils import tensor_from_list
+except ImportError:
+    from utils import tensor_from_list
 
 from constants import Constants as C
-
-
 
 
 class Maze:
@@ -142,7 +146,7 @@ class Task:
 
     def finished(self,world):
         done = (world.maze.item_channels.sum() == 0)
-                #and (not world.agent.playing))
+        done = done or (not world.agent.playing)
         return done
 
 
@@ -164,6 +168,8 @@ class Agent:
         self.bump = None
         self.playing = True
         self.last_meal = None
+        if len(self.friends):
+            self.advice.zero_()
 
     def act(self, action, maze, constant_advice=C.CONSTANT_ADVICE):
         if len(self.friends) and constant_advice:
@@ -240,7 +246,8 @@ class Agent:
             self.friend_id = friend_id
             advice, advice_probs = friend.sample()
             assert advice.data[0, 0] < self.num_basic_actions
-            self.advice[friend_id] = advice_probs.data
+            for i in range(advice_probs.size()[1]):
+                self.advice[friend_id, i] = advice_probs.data[0, i]
             #import ipdb; ipdb.set_trace()
             return advice.data[0, 0]
         except TypeError:

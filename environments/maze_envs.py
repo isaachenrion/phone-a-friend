@@ -1,5 +1,12 @@
-from .maze import MazeEnv
-from .utils import tensor_from_list
+import sys, os
+sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath('../..'))
+try:
+    from .maze import MazeEnv
+    from .utils import tensor_from_list
+except ImportError:
+    from maze import MazeEnv
+    from utils import tensor_from_list
 import torch
 
 class Basic(MazeEnv):
@@ -229,3 +236,33 @@ class RandomOrange(OneRandomFruit):
 class RandomPear(OneRandomFruit):
     def __init__(self, **kwargs):
         super().__init__(2, **kwargs)
+
+
+class NoFruit(MazeEnv):
+    def __init__(self, **kwargs):
+        walls = tensor_from_list([
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1]]
+        ).float()
+
+        exits = torch.zeros(walls.size()).float()
+        exits[6, 3] = 1
+
+        apples = torch.zeros(walls.size()).float()
+        #apples[6, 1] = 1
+        #apples[2, 5] = 1
+
+        oranges = torch.zeros(walls.size()).float()
+        #oranges[5, 1] = 1
+
+        pears = torch.zeros(walls.size()).float()
+        #pears[4, 3] = 1
+        #pears[4, 4] = 1
+
+        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)

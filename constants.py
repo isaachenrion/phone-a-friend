@@ -8,10 +8,10 @@ class Constants:
     MODEL_DIR='models/'
     WORKING_DIR = ''
 
-    NUM_BASIC_ACTIONS = 5
+    NUM_BASIC_ACTIONS = 7
     EPISODE_LENGTH = 50
 
-    TIME_INCENTIVE = -0.1
+    TIME_INCENTIVE = -0.0
     BUMP= -0.1
     MOVE= 0.
     REST= -0.1
@@ -24,7 +24,7 @@ class Constants:
 
     COORDS = None
     TRAIN_TEMPERATURE = 10
-    CONSTANT_ADVICE = False
+    CONSTANT_ADVICE = True
 
 
 
