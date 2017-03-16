@@ -6,9 +6,11 @@ ENVS = {
 2: NoWalls,
 3: RandomFruit,
 4: OneApple,
-5: EasyExit,
+5: 'EasyExit',
 6: RandomApple,
 7: RandomOrange,
 8: RandomPear,
-9: NavigateOnly
+9: NavigateOnly,
+10: 'RandomExit',
+11: ToxicApple
 }

@@ -9,34 +9,11 @@ except ImportError:
     from utils import tensor_from_list
 import torch
 
+from constants import Constants as C
+
 class Basic(MazeEnv):
     def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
-
-        exits = torch.zeros(walls.size()).float()
-        exits[6, 3] = 1
-
-        apples = torch.zeros(walls.size()).float()
-        apples[6, 1] = 1
-        apples[2, 5] = 1
-
-        oranges = torch.zeros(walls.size()).float()
-        oranges[5, 1] = 1
-
-        pears = torch.zeros(walls.size()).float()
-        pears[4, 3] = 1
-        pears[4, 4] = 1
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+        super().__init__(**kwargs)
 
 
 class NoWalls(MazeEnv):
@@ -65,204 +42,80 @@ class NoWalls(MazeEnv):
         pears = torch.zeros(walls.size()).float()
         #pears[4, 3] = 1
         #pears[4, 4] = 1
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+        maze_dict = {
+        'walls' : walls,
+        'apples' : apples,
+        'exits' : exits,
+        'pears' : pears,
+        'oranges': oranges
+        }
+        super().__init__(maze_dict=maze_dict, **kwargs)
 
 
 class OneApple(MazeEnv):
     def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
-
-        exits = torch.zeros(walls.size()).float()
-        exits[6, 3] = 1
-
-        apples = torch.zeros(walls.size()).float()
-        #apples[6, 1] = 1
+        apples = torch.zeros(C.WALLS.size()).float()
         apples[2, 5] = 1
+        maze_dict = {
+        'apples': apples
+        }
 
-        oranges = torch.zeros(walls.size()).float()
-        #oranges[5, 1] = 1
-
-        pears = torch.zeros(walls.size()).float()
-        #pears[4, 3] = 1
-        #pears[4, 4] = 1
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+        super().__init__(maze_dict=maze_dict, **kwargs)
 
 
 class ApplesEverywhere(MazeEnv):
     def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
+        apples = torch.ones(C.WALLS.size()) - C.WALLS
+        maze_dict = {
+        'apples': apples
+        }
 
-        exits = torch.zeros(walls.size()).float()
-        exits[6, 3] = 1
-
-        apples = torch.ones(walls.size()) - walls
-        oranges = torch.zeros(walls.size()).float()
-        pears = torch.zeros(walls.size()).float()
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+        super().__init__(maze_dict=maze_dict, **kwargs)
 
 
 class NavigateOnly(MazeEnv):
     def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
+        exits = torch.zeros(C.WALLS.size()).float()
+        apples = torch.zeros(C.WALLS.size()).float()
+        oranges = torch.zeros(C.WALLS.size()).float()
+        pears = torch.zeros(C.WALLS.size()).float()
+        maze_dict = {
+        'apples': apples,
+        'oranges': oranges,
+        'pears':pears,
+        'exits': exits
+        }
 
-        exits = torch.zeros(walls.size()).float()
-        apples = torch.zeros(walls.size()).float()
-        oranges = torch.zeros(walls.size()).float()
-        pears = torch.zeros(walls.size()).float()
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
-
-
-class EasyExit(MazeEnv):
-    def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
-
-        exits = torch.ones(walls.size()).float()
-
-        apples = torch.zeros(walls.size()).float()
-        apples[6, 1] = 1
-        #apples[2, 5] = 1
-
-        oranges = torch.zeros(walls.size()).float()
-        #oranges[5, 1] = 1
-
-        pears = torch.zeros(walls.size()).float()
-        #pears[4, 3] = 1
-        #pears[4, 4] = 1
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+        super().__init__(maze_dict=maze_dict, **kwargs)
 
 
 class RandomFruit(MazeEnv):
+    def __init__(self, random_items=[1, 1, 1], **kwargs):
+        maze_dict = {
+        'random_items': random_items
+        }
+        super().__init__(maze_dict=maze_dict, **kwargs)
+
+
+class RandomApple(RandomFruit):
     def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
-
-        exits = torch.zeros(walls.size()).float()
-
-        apples = torch.zeros(walls.size()).float()
-        oranges = torch.zeros(walls.size()).float()
-        pears = torch.zeros(walls.size()).float()
-
-        random_items = [10, 2, 1]
-        super().__init__(walls, exits, [apples, oranges, pears], random_items=random_items, **kwargs)
+        random_items=[1, 0, 0]
+        super().__init__(random_items=random_items, **kwargs)
 
 
-class OneRandomFruit(MazeEnv):
-    def __init__(self, fruit, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 1, 0, 1],
-        [1, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
-
-        exits = torch.zeros(walls.size()).float()
-
-        apples = torch.zeros(walls.size()).float()
-        oranges = torch.zeros(walls.size()).float()
-        pears = torch.zeros(walls.size()).float()
-        if fruit == 0:
-            random_items = [1, 0, 0]
-        elif fruit == 1:
-            random_items = [0, 1, 0]
-        elif fruit == 2:
-            random_items = [0, 0, 1]
-        else: raise ValueError("Fruit index out of bounds")
-        super().__init__(walls, exits, [apples, oranges, pears], random_items=random_items, **kwargs)
-
-
-class RandomApple(OneRandomFruit):
+class RandomOrange(RandomFruit):
     def __init__(self, **kwargs):
-        super().__init__(0, **kwargs)
+        random_items=[0, 1, 0]
+        super().__init__(random_items=random_items, **kwargs)
 
 
-class RandomOrange(OneRandomFruit):
+class RandomPear(RandomFruit):
     def __init__(self, **kwargs):
-        super().__init__(1, **kwargs)
+        random_items=[0, 0, 1]
+        super().__init__(random_items=random_items, **kwargs)
 
 
-class RandomPear(OneRandomFruit):
+class ToxicApple(RandomApple):
     def __init__(self, **kwargs):
-        super().__init__(2, **kwargs)
-
-
-class NoFruit(MazeEnv):
-    def __init__(self, **kwargs):
-        walls = tensor_from_list([
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1]]
-        ).float()
-
-        exits = torch.zeros(walls.size()).float()
-        exits[6, 3] = 1
-
-        apples = torch.zeros(walls.size()).float()
-        #apples[6, 1] = 1
-        #apples[2, 5] = 1
-
-        oranges = torch.zeros(walls.size()).float()
-        #oranges[5, 1] = 1
-
-        pears = torch.zeros(walls.size()).float()
-        #pears[4, 3] = 1
-        #pears[4, 4] = 1
-
-        super().__init__(walls, exits, [apples, oranges, pears], **kwargs)
+        reward_dict = {'apple': -100}
+        super().__init__(reward_dict=reward_dict, **kwargs)

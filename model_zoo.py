@@ -6,23 +6,30 @@ from torch.autograd import Variable
 #===================================================================== CREATION OF THE POLICY =============================================
 # Creation of a learning model Q(s): R^N -> R^A
 class Module(nn.Module):
-    def __init__(self, input_size, action_size, n_friends=0, temperature=1, disallowed_actions=None):
+    def __init__(self, input_size, action_size, n_friends=0, temperature=1, model_type='ff'):
         super().__init__()
+        self.model_type = model_type
         self.input_size = input_size
         self.action_size = action_size
         self.n_friends = n_friends
         self.temperature = temperature
-        self.disallowed_actions = disallowed_actions if disallowed_actions is not None else []
-        self.mask = torch.eye(action_size, action_size)
 
         self.num_features = 1
         for s in self.input_size:
             self.num_features *= s
-        for a in self.disallowed_actions:
-            try: self.mask[a, a] = 0
-            except IndexError:
-                print("Warning: tried to disallow an out-of-bounds action: {}".format(a))
 
+        self.update_mask()
+
+    def update_mask(self, actions=None):
+        if actions is None:
+            actions = [a for a in range(self.action_size)]
+        self.mask = torch.zeros(self.action_size, self.action_size)
+        for a in actions:
+            try: self.mask[a, a] = 1
+            except IndexError:
+                import ipdb; ipdb.set_trace()
+                print("Warning: tried to allow an out-of-bounds action: {}".format(a))
+        self.allowed_actions = actions
 
     def num_flat_features(self, x):
         size = x.size()[1:] # all dimensions except the batch dimension
@@ -69,25 +76,27 @@ class FCNet(Module):
         if self.n_friends:
             advice = advice.view(-1, self.num_flat_features(advice))
             x = torch.cat([advice, x], 1)
-            #if advice.data.sum() > 0:
-            #    import ipdb; ipdb.set_trace()
-            #import ipdb; ipdb.set_trace()
-            #advice = self.fc3a(advice)
         x = self.fc3(x)
 
         x = torch.mm(F.softmax(x / self.temperature), Variable(self.mask))
         return x
 
 
-class BaselineNet(Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class BaselineNet(nn.Module):
+    def __init__(self, input_size):
+        super().__init__()
+        self.model_type='ff'
+        self.input_size = input_size
+
+        self.num_features = 1
+        for s in self.input_size:
+            self.num_features *= s
 
         self.fc1   = nn.Linear(self.num_features, 120) # an affine operation: y = Wx + b
         self.bn1   = nn.BatchNorm1d(120)
         self.fc2   = nn.Linear(120, 84)
         self.bn2   = nn.BatchNorm1d(84)
-        self.fc3   = nn.Linear(84, self.action_size)
+        self.fc3   = nn.Linear(84, 1)
 
     def zero_(self, batch_size=None):
         pass
@@ -99,6 +108,14 @@ class BaselineNet(Module):
         x = self.fc3(x)
         x = x.view(-1)
         return x
+
+    def num_flat_features(self, x):
+        size = x.size()[1:] # all dimensions except the batch dimension
+        num_features = 1
+        for s in size:
+            num_features *= s
+        return num_features
+
 
 class ConvNet(Module):
     def __init__(self, *args, **kwargs):
@@ -132,14 +149,16 @@ class ConvNet(Module):
         return x
 
 
-
-
 class Model(nn.Module):
     def __init__(self, batch_size, neural_net, filename=None):
         super().__init__()
         self.neural_net = neural_net
         self.batch_size = batch_size
         self.filename = filename
+
+
+    def update_mask(self, actions):
+        self.neural_net.update_mask(actions)
 
     def zero_(self, batch_size=None):
         pass
@@ -191,7 +210,7 @@ class RecurrentNet(Module):
     def __init__(self, hidden_size, *args, **kwargs):
 
         self.bn = kwargs.pop('bn', False)
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, model_type='recurrent', **kwargs)
         self.hidden_size = hidden_size
         input_size = self.num_features
         if self.n_friends:
