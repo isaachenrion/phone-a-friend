@@ -1,10 +1,6 @@
 
 import torch
-class Constants:
-
-    #LEARNING_RATE=0.01
-    STDV=0.01
-    WORKING_DIR = ''
+class MazeConstants:
 
     #### REWARDS ####
     TIME_INCENTIVE = -0.0
@@ -17,6 +13,8 @@ class Constants:
     PEAR= 10
     QUIT= 1
     CALL_COST=-0.1
+    SENSOR_COST = -0.1
+    REWARD_STD=0.0
 
     #### MAZE ####
     WALLS = torch.Tensor([
@@ -29,6 +27,7 @@ class Constants:
     [1, 0, 1, 0, 1, 0, 0, 1],
     [1, 1, 1, 1, 1, 1, 1, 1]]).float()
     EXITS = torch.zeros(WALLS.size()).float()
+    EXITS[6, 1] = 1
     APPLES = torch.zeros(WALLS.size()).float()
     ORANGES = torch.zeros(WALLS.size()).float()
     PEARS = torch.zeros(WALLS.size()).float()
@@ -38,13 +37,19 @@ class Constants:
     RANDOM_EXIT = False
 
     #### WORLD ####
-    COORDS = None
     NUM_BASIC_ACTIONS = 5
-    EPISODE_LENGTH = 50
+    CONSTANT_ADVICE = False
+    ACT_ON_ADVICE = False
+    EXPERIMENTAL = True
 
+    COLLECTED_CONSTANTS = locals()
+
+class ExperimentConstants:
+    WORKING_DIR = ''
+
+    EPISODE_LENGTH = 50
     #### TRAINING ####
     TRAIN_TEMPERATURE = 1
     EVAL_TEMPERATURE = 1
-    CONSTANT_ADVICE = True
 
     COLLECTED_CONSTANTS = locals()

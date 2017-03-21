@@ -11,8 +11,10 @@ from torch_rl.tools import rl_evaluate_policy, rl_evaluate_policy_multiple_times
 from torch_rl.policies import DiscreteModelPolicy, DiscreteEpsilonGreedyPolicy
 from gym.spaces import Discrete
 from model_zoo import *
-from constants import Constants as C
+from constants import ExperimentConstants as C
+from constants import MazeConstants as MC
 from experiment import Experiment
+from environments.maze import PolicySensor, RewardSensor
 import argparse
 
 parser = argparse.ArgumentParser(description='Phone a friend')
@@ -25,37 +27,41 @@ parser.add_argument('--n_train_steps', '-n', type=int, default=1000, metavar='N'
 parser.add_argument('--lr', type=float, default=0.02, metavar='LR',
                     help='learning rate (default: 0.001)')
 parser.add_argument('--debug','-d', action='store_true')
-parser.add_argument('--recurrent','-r', action='store_true')
+parser.add_argument('--ff','-f', action='store_true')
 parser.add_argument('--entropy_term', '-z', type=float, default=1)
 parser.add_argument('--clip', '-c', action='store_true')
-parser.add_argument('--use_friends', '-f', action='store_true')
+parser.add_argument('--use_policy_sensors', '-p', action='store_true')
+parser.add_argument('--use_reward_sensors', '-r', action='store_true')
 parser.add_argument('--epsilon', '-e', type=float, default=0.0)
 parser.add_argument('--load', '-l', type=str, default=None)
 parser.add_argument('--no_bn', action='store_true')
 args = parser.parse_args()
 args.bn = not args.no_bn
+args.recurrent = not args.ff
 
 '''LOAD FRIENDS'''
-model_strs = []
-if args.use_friends:
-    model_strs.append('Mar-14___19-34-35-RandomPear-recurrent')
-    model_strs.append('Mar-15___10-50-29-RandomOrange-recurrent')
-    model_strs.append('Mar-15___10-51-59-RandomApple-recurrent')
-for s in model_strs:
-    print("Loaded friend: {}".format(s))
-friends = []
-for model_str in model_strs:
-    filename = os.path.join(C.WORKING_DIR, 'experiments', model_str, model_str + '.ckpt')
-    net = torch.load(filename)
-    if net.model_type == 'ff':
-        friend_model = Model(1, net, filename)
-    elif net.model_type == 'recurrent':
-        friend_model = RecurrentModel(1, net, filename)
-    friend_model.eval()
-    friend = DiscreteModelPolicy(Discrete(C.NUM_BASIC_ACTIONS), friend_model, allowed_actions=range(C.NUM_BASIC_ACTIONS))
-    friends.append(friend)
+policy_sensors = []
+if args.use_policy_sensors:
+    model_strs = []
+    model_strs.append('Mar-16___13-22-24-RandomApple-recurrent')
+    model_strs.append('Mar-16___13-29-01-RandomOrange-recurrent')
+    model_strs.append('Mar-16___13-35-40-RandomPear-recurrent')
+    for s in model_strs:
+        policy_sensors.append(PolicySensor(s))
+        print("Loaded policy sensor: {}".format(s))
 
-num_observations = 1 + (len(friends) != 0)
+reward_sensors = []
+if args.use_reward_sensors:
+    reward_strs = ['pear', 'orange', 'apple']
+    for s in reward_strs:
+        reward_sensors.append(RewardSensor(s))
+        print("Loaded reward sensor: {}".format(s))
+
+num_sensors = len(policy_sensors) + len(reward_sensors)
+if num_sensors > 0:
+    sensors = policy_sensors + reward_sensors
+else:
+    sensors = None
 
 ''' LOAD ENVIRONMENTS '''
 print("Creating %d environments" % args.batch_size)
@@ -63,23 +69,44 @@ from environments.env_list import ENVS
 Env = ENVS[args.env]
 print("Environment: {}".format(Env.__name__))
 
+
+#import ipdb; ipdb.set_trace()
 #allowed_actions=[5, 6, 7]
-allowed_actions = range(C.NUM_BASIC_ACTIONS + len(friends))
-envs=[Env(friends=friends) for _ in range(args.batch_size)]
+allowed_actions = range(MC.NUM_BASIC_ACTIONS + num_sensors)
+envs=[Env(sensors=sensors) for _ in range(args.batch_size)]
+
 A = envs[0].action_space.n
+try:
+    E = sum([sensor.shape for sensor in envs[0].world.agent.sensors])
+except TypeError:
+    E = None
+print("Total sensor size: {}".format(E))
 state_size = envs[0].size
+
 print("Number of Actions is: {}".format(A))
 print("State size is {} x {} x {}".format(*state_size))
 
 ''' BUILD MODEL '''
-baseline_net = BaselineNet(state_size)
-baseline_model = Model(args.batch_size, baseline_net)
+
+num_observations = 1
+if MC.EXPERIMENTAL:
+    num_observations = num_observations + (E is not None)
+print(num_observations)
+
+if MC.EXPERIMENTAL:
+    baseline_net = BaselineNet2(input_size=state_size, extra_info_size=E)
+    baseline_model = None
+else:
+    baseline_net = BaselineNet(state_size)
+    baseline_model = Model(args.batch_size, baseline_net)
 
 if args.recurrent:
-    action_net = RecurrentNet(50, state_size, A, n_friends=len(friends), bn=args.bn)
+    action_net = RecurrentNet2(hidden_size=50, input_size=state_size, action_size=A, extra_info_size=E, bn=args.bn)
+
     action_model = RecurrentModel(args.batch_size, action_net)
 else:
-    action_net = FCNet(state_size, A, n_friends=len(friends), bn=args.bn)
+    raise ValueError("MUST CHANGE FCNET IMPLEMENTATION")
+    action_net = FCNet(input_size=state_size, action_size=A, n_friends=len(friends), bn=args.bn)
     action_model = Model(args.batch_size, action_net)
 
 if args.load is not None:

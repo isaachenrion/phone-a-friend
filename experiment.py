@@ -11,7 +11,8 @@ from torch_rl.tools import rl_evaluate_policy, rl_evaluate_policy_multiple_times
 from torch_rl.policies import DiscreteModelPolicy
 from gym.spaces import Discrete
 from model_zoo import *
-from constants import Constants as C
+from constants import ExperimentConstants as C
+from constants import MazeConstants as MC
 import numpy as np
 
 class Experiment:
@@ -27,7 +28,7 @@ class Experiment:
         self.num_observations = num_observations
         self.args = args
         self.training_actions = [a for a in range(policy.action_space.n)]
-        self.evaluation_actions = [a for a in range(C.NUM_BASIC_ACTIONS)]
+        self.evaluation_actions = [a for a in range(MC.NUM_BASIC_ACTIONS)]
         self.do_admin()
 
     def do_admin(self):
@@ -55,8 +56,8 @@ class Experiment:
             write_and_log('optimizer', self.optimizer, f, log)
             write_and_log('num_observations', self.num_observations, f, log)
             write_and_log("env_name", self.envs[0].__class__.__name__, f, log)
-            for idx, friend in enumerate(self.envs[0].friends):
-                write_and_log("Friend{}".format(idx + 1), friend.action_model.filename, f, log)
+            #for idx, friend in enumerate(self.envs[0].friends):
+            #    write_and_log("Friend{}".format(idx + 1), friend.action_model.filename, f, log)
             for k, v in vars(self.args).items():
                 write_and_log(k, v, f, log)
 
@@ -66,12 +67,27 @@ class Experiment:
             write_and_log("action_model", self.policy.action_model, f, log)
             write_and_log("baseline_model", self.policy.baseline_model, f, log)
 
-            f.write("\n####### CONSTANTS #######\n\n")
-            # get rid of garbage
-            garbage = ["COLLECTED_CONSTANTS", "__module__", "__qualname__"]
+            f.write("\n####### MAZE #######\n\n")
+            for k, v in self.envs[0].world.maze.maze_dict.items():
+                write_and_log(k, v, f, log)
+
+            f.write("\n####### REWARDS #######\n\n")
+            for k, v in self.envs[0].reward.reward_dict.items():
+                write_and_log(k, v, f, log)
+
+            f.write("\n####### SENSORS #######\n\n")
+            if self.envs[0].world.agent.sensors is None:
+                write_and_log("Sensors", "none", f, log)
+            else:
+                for idx, sensor in enumerate(self.envs[0].world.agent.sensors):
+                    write_and_log(idx, sensor.name, f, log)
+
+            f.write("\n####### TRAINING CONSTANTS #######\n\n")
+            garbage = ['__qualname__', 'COLLECTED_CONSTANTS', '__module__']
             for k, v in C.COLLECTED_CONSTANTS.items():
                 if k not in garbage:
                     write_and_log(k, v, f, log)
+
 
     def print_train(self):
         out_str = 'Training statistics:\n'
@@ -87,8 +103,8 @@ class Experiment:
         out_str += '\n'
         print(out_str)
 
-    def print_eval(self):
-        out_str = "Evaluation after {} training episodes\nAvg reward = {}".format(self.log.learner_log.t * len(self.envs), self.log.get_last_dynamic_value("avg_total_reward", eval_mode=True))
+    def print_eval(self, step):
+        out_str = "Evaluation after {} training episodes\nAvg reward = {}".format((step) * len(self.envs), self.log.get_last_dynamic_value("avg_total_reward", eval_mode=True))
         action_breakdown = self.log.get_last_dynamic_value("action_breakdown", eval_mode=True)
         for idx, value in enumerate(action_breakdown):
             out_str += "\nAction {} percentage: {}".format(idx, value)
@@ -115,7 +131,7 @@ class Experiment:
     def evaluate(self, step, learning_algorithm):
         self.policy.eval_mode(1, self.evaluation_actions)
         _=rl_evaluate_policy_multiple_times(self.envs[0],self.log,self.policy,C.EPISODE_LENGTH,1.0,10)
-        self.print_eval()
+        self.print_eval(step)
         if step > 0:
             self.log.log(eval_mode=True)
 
@@ -131,7 +147,7 @@ class Experiment:
                                 args=self.args)
         learning_algorithm.reset()
 
-        for step in range(self.n_train_steps):
+        for step in range(0, self.n_train_steps):
             self.train(step, learning_algorithm)
             if step % self.eval_freq == 0:
                 self.evaluate(step, learning_algorithm)
