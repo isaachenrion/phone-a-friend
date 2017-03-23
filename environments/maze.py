@@ -4,7 +4,7 @@ import copy
 import sys, os
 sys.path.insert(0, os.path.abspath('..'))
 sys.path.insert(0, os.path.abspath('../..'))
-
+import collections
 import gym
 from gym.utils import seeding
 from gym.spaces import Discrete, Box
@@ -80,17 +80,27 @@ class World:
         self.seed = random_seed
         np.random.seed(random_seed)
 
+        self.state_size_dict = collections.OrderedDict()
+        self.state_size_dict["spatial"] = [1 + self.maze.num_channels, self.maze.height, self.maze.width]
+        if self.agent.sensors is not None:
+            for s in self.agent.sensors:
+                self.state_size_dict[s.name] = s.shape
+
+        self.state = collections.OrderedDict()
+        for key in self.state_size_dict.keys():
+            self.state[key] = None
+
     def step(self, action):
         self.on_step += 1
         self.agent.act(action, self.maze)
-        self.state = self.get_state()
+        self.process_state()
 
-    def get_state(self):
-        state = [torch.cat([self.agent.channels, self.maze.channels], 0)]
-        #self.get_distance_from_goal()
-        if self.agent.advice is not None: state += [self.agent.advice]
-        if self.agent.sensors is not None: state += [torch.cat([sensor.call() for sensor in self.agent.sensors], 0)]
-        return state
+    def process_state(self):
+        self.state["spatial"] = torch.cat([self.agent.channels, self.maze.channels], 0)
+        if self.agent.sensors is not None:
+            for s in self.agent.sensors:
+                self.state[s.name] = s.call()
+        self.agent.set_state(self.state)
 
     def get_distance_from_goal(self):
         x_agent = self.agent.x
@@ -112,7 +122,7 @@ class World:
         self.agent.reset(self.maze, x, y)
         if self.maze.start_position is not None:
             self.place_agent(*self.maze.start_position)
-        self.state = self.get_state()
+        self.process_state()
 
     #def initialize(self):
     #    self._action_space = Discrete(self.agent.num_actions)
@@ -124,7 +134,7 @@ class World:
             self.agent.reset(self.maze, x, y)
         else:
             raise ValueError("Invalid position for agent!")
-        self.state = self.get_state()
+        self.process_state()
 
 class Task:
     def __init__(self, reward_dict):
@@ -132,27 +142,29 @@ class Task:
         self.original_reward_dict = reward_dict
 
     def reward(self, world):
-        if world.agent.action_type == 'move':
+        if world.agent.action_type in ['left', 'right', 'up', 'down']:
             if world.agent.bump:
                 r = self.reward_dict['bump']
             else: r = self.reward_dict['move']
-        elif world.agent.action_type == 'eat':
-            if world.agent.last_meal is not None:
-                if world.agent.last_meal == 0:
+        elif world.agent.action_type == 'plus':
+            if world.agent.last_item is not None:
+                if world.agent.last_item == 0:
                     r = self.reward_dict['apple']
-                elif world.agent.last_meal == 1:
+                elif world.agent.last_item == 1:
                     r = self.reward_dict['orange']
-                elif world.agent.last_meal == 2:
+                elif world.agent.last_item == 2:
                     r = self.reward_dict['pear']
             else: r = self.reward_dict['empty_handed']
-        elif world.agent.action_type == 'rest':
-            r = self.reward_dict['rest']
-        elif world.agent.action_type == 'quit':
-            if self.finished(world):
-                r = self.reward_dict['quit']
-            else:
-                r = self.reward_dict['rest']
-        elif world.agent.action_type == 'activate_sensor':
+        elif world.agent.action_type == 'minus':
+            if world.agent.last_item is not None:
+                if world.agent.last_item == 0:
+                    r = -self.reward_dict['apple']
+                elif world.agent.last_item == 1:
+                    r = -self.reward_dict['orange']
+                elif world.agent.last_item == 2:
+                    r = -self.reward_dict['pear']
+            else: r = self.reward_dict['empty_handed']
+        elif 'activate_sensor' in world.agent.action_type:
             idx = world.agent.sensor_id
             r = self.reward_dict['sensor_costs'][idx]
         r += self.reward_dict['time_incentive']
@@ -161,9 +173,10 @@ class Task:
 
     def reset(self, world):
         if self.reward_dict['reward_std'] and C.EXPERIMENTAL:
-            self.reward_dict['apple']  = self.original_reward_dict['apple'] + np.random.randn(1).item() * self.reward_dict['reward_std']
-            self.reward_dict['orange'] = self.original_reward_dict['orange'] + np.random.randn(1).item() * self.reward_dict['reward_std']
-            self.reward_dict['pear']   = self.original_reward_dict['pear'] + np.random.randn(1).item() * self.reward_dict['reward_std']
+            for key in ['apple', 'pear', 'orange']:
+                r = 2 * (np.random.randn(1).item() > 0) - 1
+                #r  = self.original_reward_dict[key] + np.random.randn(1).item() * self.reward_dict['reward_std']
+                self.reward_dict[key]  = max(min(r, +self.reward_dict['max_norm']), -self.reward_dict['max_norm'])
         else:
             pass
 
@@ -178,14 +191,19 @@ class Task:
 
 class Sensor:
     """An object that can provide information about the environment to an agent"""
-    def __init__(self, shape, name):
+    def __init__(self, shape, name, wipe_after_call=False):
         self.shape = shape
         self.info = torch.zeros(shape)
         self.name = name
+        self.wipe_after_call = wipe_after_call
+        self.type=None
 
 
     def call(self):
-        return self.info
+        info = self.info.clone()
+        if self.wipe_after_call:
+            self.zero_()
+        return info
 
     def zero_(self):
         self.info.zero_()
@@ -193,28 +211,41 @@ class Sensor:
     def sense(self, state):
         pass
 
+    def reset(self):
+        self.zero_()
+
 
 class RewardSensor(Sensor):
-    def __init__(self, reward_key):
-        super().__init__(shape=1, name="RewardSensor({})".format(reward_key))
+    def __init__(self, reward_key, **kwargs):
+        super().__init__(shape=1, name="RewardSensor({})".format(reward_key), **kwargs)
         self.reward_key = reward_key
         self.reward = None
+        self.type="reward"
 
     def attach(self, reward):
         self.reward = reward
 
     def sense(self, state):
+        self.zero_()
         reward_dict = self.reward.reward_dict
         self.info[0] = reward_dict[self.reward_key]
 
+class ActionSensor(Sensor):
+    def __init__(self, action_type, **kwargs):
+        super().__init__(shape=1, name="ActionSensor({})".format(action_type), **kwargs)
+        self.type="action"
+
+    def sense(self, action):
+        self.zero_()
+        self.info[0] = 1
 
 class PolicySensor(Sensor):
-    def __init__(self, model_str, max_action=True):
+    def __init__(self, model_str, max_action=False, **kwargs):
         out_shape = C.NUM_BASIC_ACTIONS
         self.max_action = max_action
-        super().__init__(shape=out_shape, name="PolicySensor({})".format(model_str))
+        super().__init__(shape=out_shape, name="PolicySensor({})-{}".format(out_shape, model_str), **kwargs)
+        self.type="policy"
         filename = os.path.join(EC.WORKING_DIR, 'experiments', model_str, model_str + '.ckpt')
-
         net = torch.load(filename)
         if net.model_type == 'ff':
             policy_model = Model(1, net, filename)
@@ -225,43 +256,42 @@ class PolicySensor(Sensor):
 
 
     def sense(self, state):
-        self.policy.observe(state)
+        self.policy.observe({key: Variable(s.unsqueeze(0)) for key, s in state.items()})
         advice, advice_probs = self.policy.sample()
+        self.zero_()
         if self.max_action:
             self.info[advice.data[0, 0]] = 1
         else:
             self.info = advice_probs.squeeze(0).data
-        #import ipdb; ipdb.set_trace()
 
 
 class Agent:
-    def __init__(self, sensors=None):
+    def __init__(self, active_sensors=None):
         self.channels = None
         self.x = self.y = None
         self.direction_dict = {'down': [1, 0],
                                 'up': [-1, 0],
                                 'left': [0, -1],
                                 'right': [0, 1]}
-        self.sensors = sensors
-        self.advice = None
-        self.num_channels = 1
         self.num_basic_actions = C.NUM_BASIC_ACTIONS
-        self.reset_num_actions()
+        self.reset_num_actions(active_sensors)
+        self.active_sensors = active_sensors if active_sensors is not None else []
+        self.num_channels = 1
+        self.state = None
+        self.action_types = [key for key in self.direction_dict.keys()] \
+                            + ['plus', 'minus'] \
+                            + ['activate_sensor_{}'.format(sensor.name) for sensor in self.active_sensors]
+        self.last_action_sensors = [ActionSensor(action_type) for action_type in self.action_types]
 
-    def assign_sensor(self, sensor):
-        if self.sensors is None:
-            self.sensors = [sensor]
-        else: self.sensors.append(sensor)
+        self.passive_sensors = self.last_action_sensors
+        self.sensors = self.passive_sensors
 
     def reset_states(self):
         self.bump = None
         self.playing = True
-        self.last_meal = None
-        if self.sensors is not None:
-            for sensor in self.sensors:
-                sensor.zero_()
+        self.last_item = None
 
-    def act(self, action, maze, constant_advice=C.CONSTANT_ADVICE):
+    def act(self, action, maze):
         self.reset_states()
         if action == 0:
             self.move('up', maze)
@@ -272,24 +302,23 @@ class Agent:
         elif action == 3:
             self.move('right', maze)
         elif action == 4:
-            self.eat(maze)
-        #elif action == 5:
-        #    self.rest()
-        #elif action == 6:
-        #    self.quit(maze)
-
+            self.plus(maze)
+        elif action == 5:
+            self.minus(maze)
         elif action >= self.num_basic_actions:
             index = action - self.num_basic_actions
             advice = self.activate_sensor(index, maze)
 
-            if C.ACT_ON_ADVICE:
-                self.act(advice, maze)
-            self.action_type = 'activate_sensor'
+            #if C.ACT_ON_ADVICE:
+            #    self.act(advice, maze)
         else:
             raise ValueError('Action out of bounds')
+        for sensor in self.last_action_sensors:
+            sensor.sense(self.action_type)
+        assert self.action_type in self.action_types
 
     def move(self, direction_key, maze):
-        self.action_type = 'move'
+        self.action_type = direction_key
         direction = self.direction_dict[direction_key]
         candidate_x = self.x + direction[0]
         candidate_y = self.y + direction[1]
@@ -305,17 +334,30 @@ class Agent:
     def rest(self):
         self.action_type = 'rest'
 
-    def eat(self, maze):
-        self.action_type = 'eat'
+    def plus(self, maze):
+        self.action_type = 'plus'
         for idx, channel in enumerate(maze.item_channels):
             if channel[self.x, self.y]:
                 channel[self.x, self.y] -= 1 # clear the channels
                 if maze.regenerate:
                     x, y = maze.get_random_valid_position()
                     channel[x, y] = 1
-                self.last_meal = idx
+                self.last_item = idx
                 return idx
-        self.last_meal = None
+        self.last_item = None
+        return None
+
+    def minus(self, maze):
+        self.action_type = 'minus'
+        for idx, channel in enumerate(maze.item_channels):
+            if channel[self.x, self.y]:
+                channel[self.x, self.y] -= 1 # clear the channels
+                if maze.regenerate:
+                    x, y = maze.get_random_valid_position()
+                    channel[x, y] = 1
+                self.last_item = idx
+                return idx
+        self.last_item = None
         return None
 
     def quit(self, maze):
@@ -323,31 +365,19 @@ class Agent:
         if maze.exits[self.x, self.y]:
             self.playing = False
 
-    def phone_friend_OLD(self, friend_id, maze):
-        self.action_type = 'activate_sensor'
-        self.num_calls += 1
-        try:
-            state = torch.cat([self.position.unsqueeze(0), maze.channels], 0).unsqueeze(0)
-            friend = self.friends[friend_id]
-            friend.observe(state)
-            self.friend_id = friend_id
-            advice, advice_probs = friend.sample()
-            assert advice.data[0, 0] < self.num_basic_actions
-            for i in range(advice_probs.size()[1]):
-                self.advice[friend_id, i] = advice_probs.data[0, i]
-            return advice.data[0, 0]
-        except TypeError:
-            pass
+    def set_state(self, state):
+        self.state = state
 
     def activate_sensor(self, sensor_id, maze):
-        state = torch.cat([self.position.unsqueeze(0), maze.channels], 0).unsqueeze(0)
-        self.sensors[sensor_id].sense(state)
+        sensor = self.active_sensors[sensor_id]
+        sensor.sense(self.state)
         self.sensor_id = sensor_id
+        self.action_type = 'activate_sensor_{}'.format(sensor.name)
 
-    def reset_num_actions(self):
+    def reset_num_actions(self, active_sensors):
         self.num_actions = self.num_basic_actions
-        if self.sensors is not None:
-            self.num_actions += len(self.sensors)
+        if active_sensors is not None:
+            self.num_actions += len(active_sensors)
 
     def reset(self, maze, x, y):
         self.channels = torch.zeros(self.num_channels, *maze.walls.size())
@@ -359,11 +389,10 @@ class Agent:
         self.playing = True
         self.num_calls = 0
         self.action_type = None
-        if C.EXPERIMENTAL:
-            if self.sensors is not None:
-                for sensor in self.sensors:
-                    sensor.zero_()
-            pass
+        if self.sensors is not None:
+            for s in self.sensors:
+                s.reset()
+
 
 
 
@@ -407,11 +436,11 @@ class Env(gym.Env):
 
 class MazeEnv(Env):
     def __init__(self, maze_dict={}, reward_dict={},
-                sensors = None,
+                active_sensors = None,
                 agent=None, world=None, reward=None, maze=None):
-        if sensors is not None:
-            num_sensors = len(sensors)
-        else: num_sensors = 0
+        if active_sensors is not None:
+            num_active_sensors = len(active_sensors)
+        else: num_active_sensors = 0
         default_maze_dict = {
                         'walls'         : C.WALLS,
                         'exits'         : C.EXITS,
@@ -438,8 +467,9 @@ class MazeEnv(Env):
                       'orange'         : C.ORANGE,
                       'pear'           : C.PEAR,
                       'quit'           : C.QUIT,
-                      'sensor_costs'   : [C.SENSOR_COST] * num_sensors,
-                      'reward_std'     : C.REWARD_STD
+                      'sensor_costs'   : [C.SENSOR_COST] * num_active_sensors,
+                      'reward_std'     : C.REWARD_STD,
+                      'max_norm'       : C.MAX_NORM
         }
 
         for k, v in default_reward_dict.items():
@@ -449,11 +479,12 @@ class MazeEnv(Env):
         if maze is None: maze = Maze(maze_dict)
         if reward is None: reward = Task(reward_dict)
 
-        if sensors is not None:
-            for sensor in sensors:
+        if active_sensors is not None:
+            for sensor in active_sensors:
                 if isinstance(sensor, RewardSensor):
                     sensor.attach(reward)
-        if agent is None: agent = Agent(sensors)
+
+        if agent is None: agent = Agent(active_sensors)
         if world is None: world = World(maze, agent, reward)
 
 

@@ -89,6 +89,10 @@ class Experiment:
                     write_and_log(k, v, f, log)
 
 
+    def superprint(self, string, exp_log):
+        print(string)
+        exp_log.write("{}\n".format(string))
+
     def print_train(self):
         out_str = 'Training statistics:\n'
         out_str += "Reward = {:.4f} (length = {})".format(self.log.get_last_dynamic_value("avg_total_reward"),self.log.get_last_dynamic_value("avg_length"))
@@ -101,7 +105,7 @@ class Experiment:
         for idx, value in enumerate(action_breakdown):
             out_str += "\nAction {} percentage: {}".format(idx, value)
         out_str += '\n'
-        print(out_str)
+        self.superprint(out_str, self.exp_log)
 
     def print_eval(self, step):
         out_str = "Evaluation after {} training episodes\nAvg reward = {}".format((step) * len(self.envs), self.log.get_last_dynamic_value("avg_total_reward", eval_mode=True))
@@ -109,7 +113,7 @@ class Experiment:
         for idx, value in enumerate(action_breakdown):
             out_str += "\nAction {} percentage: {}".format(idx, value)
         out_str += '\n'
-        print(out_str)
+        self.superprint(out_str, self.exp_log)
 
     def save_everything(self):
         torch.save(self.log.learner_log, self.log_file)
@@ -135,26 +139,52 @@ class Experiment:
         if step > 0:
             self.log.log(eval_mode=True)
 
+    def _run(self):
+        with open(os.path.join(self.experiment_dir,'exp_log.txt'), 'a') as f:
+            self.exp_log = f
+            learning_algorithm=learners.LearnerBatchPolicyGradient(
+                                    action_space=self.envs[0].action_space,
+                                    log=self.log,
+                                    average_reward_window=10,
+                                    policy=self.policy,
+                                    optimizer=self.optimizer,
+                                    epsilon=self.epsilon,
+                                    observation_shapes=self.envs[0].world.state_size_dict,
+                                    args=self.args)
+            learning_algorithm.reset()
+
+            for step in range(0, self.n_train_steps):
+                self.train(step, learning_algorithm)
+                if step % self.eval_freq == 0:
+                    self.evaluate(step, learning_algorithm)
+                if step % self.save_freq == 0:
+                    self.save_everything()
+                if step == 0:
+                    self.log.create_summaries()
+
+            self.save_everything()
+            print("Finished training!")
+
     def run(self):
-        learning_algorithm=learners.LearnerBatchPolicyGradient(
-                                action_space=self.envs[0].action_space,
-                                log=self.log,
-                                average_reward_window=10,
-                                policy=self.policy,
-                                optimizer=self.optimizer,
-                                epsilon=self.epsilon,
-                                num_observations=self.num_observations,
-                                args=self.args)
-        learning_algorithm.reset()
-
-        for step in range(0, self.n_train_steps):
-            self.train(step, learning_algorithm)
-            if step % self.eval_freq == 0:
-                self.evaluate(step, learning_algorithm)
-            if step % self.save_freq == 0:
+        try: self._run()
+        except (KeyboardInterrupt, SystemExit, Exception):
+            self.exp_log.close()
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            import traceback
+            traceback.print_tb(exc_traceback, limit=10, file=sys.stdout)
+            save = input("Save model? y/n\n")
+            while save not in ['y', 'n']:
+                save = input("Save model? y/n\n")
+            if save == 'y':
                 self.save_everything()
-            if step == 0:
-                self.log.create_summaries()
-
-        self.save_everything()
-        print("Finished training!")
+            elif save == 'n':
+                self.kill()
+            else: raise ValueError("Enter y or n")
+            debug = input('ipdb?\n')
+            while debug not in ['y', 'n']:
+                debug = input('ipdb?\n')
+            if debug == 'y':
+                import ipdb; ipdb.set_trace()
+            elif debug == 'n':
+                os._exit(0)
+            else: raise ValueError("Enter y or n")

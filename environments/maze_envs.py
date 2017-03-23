@@ -145,39 +145,40 @@ class DoubleRandomPear(MazeEnv):
         random_items=[0, 0, 1]
         maze_dict = {
         'random_items': random_items,
-        'regenerate':True
+        'regenerate':False
         }
         reward_dict = {
         'apple':0,
         'orange':0,
         'pear':0,
-        'reward_std': 5.0
+        'reward_std': 1.0
         }
         super().__init__(maze_dict=maze_dict, reward_dict=reward_dict, **kwargs)
 
 
 class DoubleRandomPearWithSensor(DoubleRandomPear):
     def __init__(self, **kwargs):
-        sensors_ = [s for s in kwargs.pop('sensors', [])]
+        active_sensors_ = [s for s in kwargs.pop('active_sensors', [])]
         for key in ['pear']:
             reward_sensor = RewardSensor(key)
-            sensors_.append(reward_sensor)
-        super().__init__(sensors=sensors_, **kwargs)
+            active_sensors_.append(reward_sensor)
+        super().__init__(active_sensors=active_sensors_, **kwargs)
 
 
 class RandomRewardsWithSensors(RandomRewards):
     def __init__(self, **kwargs):
-        sensors_ = [s for s in kwargs.pop('sensors', [])]
+        active_sensors_ = [s for s in kwargs.pop('active_sensors', [])]
         for key in ['apple', 'orange', 'pear']:
             reward_sensor = RewardSensor(key)
-            sensors_.append(reward_sensor)
-        super().__init__(sensors=sensors_, **kwargs)
+            active_sensors_.append(reward_sensor)
+        super().__init__(active_sensors=active_sensors_, **kwargs)
+
 
 class DoubleRandomPearWithPolicySensor(DoubleRandomPear):
     def __init__(self, **kwargs):
-        sensors_ = [s for s in kwargs.pop('sensors', [])]
+        active_sensors_ = [s for s in kwargs.pop('active_sensors', [])]
         for key in ['pear']:
             reward_sensor = RewardSensor(key)
-            sensors_.append(reward_sensor)
-        sensors_.append(PolicySensor('Mar-16___13-35-40-RandomPear-recurrent'))
-        super().__init__(sensors=sensors_, **kwargs)
+            active_sensors_.append(reward_sensor)
+        active_sensors_.append(PolicySensor('Mar-16___13-35-40-RandomPear-recurrent'))
+        super().__init__(active_sensors=active_sensors_, **kwargs)

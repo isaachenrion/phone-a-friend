@@ -15,6 +15,7 @@ class MazeConstants:
     CALL_COST=-0.1
     SENSOR_COST = -0.1
     REWARD_STD=0.0
+    MAX_NORM = 1
 
     #### MAZE ####
     WALLS = torch.Tensor([
@@ -37,7 +38,7 @@ class MazeConstants:
     RANDOM_EXIT = False
 
     #### WORLD ####
-    NUM_BASIC_ACTIONS = 5
+    NUM_BASIC_ACTIONS = 6
     CONSTANT_ADVICE = False
     ACT_ON_ADVICE = False
     EXPERIMENTAL = True

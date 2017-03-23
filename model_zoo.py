@@ -1,6 +1,9 @@
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.init
 import torch
+import numpy as np
+import collections
 from torch.autograd import Variable
 #===================================================================== CREATION OF THE POLICY =============================================
 # Creation of a learning model Q(s): R^N -> R^A
@@ -9,11 +12,11 @@ class BaseModule(nn.Module):
     def __init__(self, input_size=None, output_size=None, model_type=None):
         super().__init__()
         self.model_type = model_type
-        self.input_size = input_size
-        self.output_size = output_size
-        self.num_features = 1
-        for s in self.input_size:
-            self.num_features *= s
+        #self.input_size = input_size
+        #self.output_size = output_size
+        #self.num_features = 1
+        #for s in self.input_size:
+        #    self.num_features *= s
 
     def num_flat_features(self, x):
         size = x.size()[1:] # all dimensions except the batch dimension
@@ -128,15 +131,15 @@ class BaselineNet2(nn.Module):
         self.model_type='ff'
         self.input_size = input_size
         self.extra_info_size = extra_info_size
-        self.input_num_features = 1
+        self.spatial_num_features = 1
         for s in self.input_size:
-            self.input_num_features *= s
+            self.spatial_num_features *= s
         if self.extra_info_size is None:
             self.extra_info_num_features = 0
         else:
             self.extra_info_num_features = self.extra_info_size
 
-        self.fc1   = nn.Linear(self.input_num_features + self.extra_info_num_features, 120) # an affine operation: y = Wx + b
+        self.fc1   = nn.Linear(self.spatial_num_features + self.extra_info_num_features, 120) # an affine operation: y = Wx + b
         self.bn1   = nn.BatchNorm1d(120)
         self.fc2   = nn.Linear(120, 84)
         self.bn2   = nn.BatchNorm1d(84)
@@ -290,29 +293,56 @@ class RecurrentNet(ActionModule):
 
 
 class RecurrentNet2(BaseModule):
-    def __init__(self, input_size=None, extra_info_size=None, hidden_size=None, action_size=None, softmax=True, **kwargs):
+    def __init__(self, input_size_dict=None, hidden_size=None, action_size=None, softmax=True, **kwargs):
         self.bn = kwargs.pop('bn', False)
-        super().__init__(model_type='recurrent', output_size=action_size, input_size=input_size)
-        self.hidden_size = hidden_size
-        self.input_size = input_size
-        self.action_size = action_size
-        self.extra_info_size = extra_info_size
-        self.input_num_features = 1
+        self.wn = kwargs.pop('wn', False)
         self.softmax = softmax
-        for s in self.input_size:
-            self.input_num_features *= s
-        if self.extra_info_size is None:
+        super().__init__(model_type='recurrent', output_size=None, input_size=None)
+        self.hidden_size = hidden_size
+        self.input_size_dict=input_size_dict.copy()
+        self.action_size = action_size
+
+        self.spatial_size = self.input_size_dict["spatial"]
+
+        if input_size_dict is None:
             self.extra_info_num_features = 0
         else:
-            self.extra_info_num_features = self.extra_info_size
+            self.extra_info_num_features = sum([size for key, size in input_size_dict.items() if key != "spatial"])
+
+
+        self.spatial_num_features = 1
+
+        for s in self.spatial_size:
+            self.spatial_num_features *= s
 
         fc1_dim = 100
-        self.fc1   = nn.Linear(self.input_num_features + self.extra_info_num_features, fc1_dim) # an affine operation: y = Wx + b
+        self.use_dict = True
+        self.aggregate = False
+        if self.aggregate and self.use_dict:
+            self.input_size_dict = {"extra_info": self.extra_info_num_features,
+                                    "spatial": self.spatial_size}
+
+        if not self.wn:
+            if self.use_dict:
+                self.fc1 = LinearDict(self.input_size_dict, fc1_dim)
+            else:
+                self.fc1 = nn.Linear(self.spatial_num_features + self.extra_info_num_features, fc1_dim)
+        else:
+            if self.use_dict:
+                self.fc1 = WeightNormDict(self.input_size_dict, fc1_dim)
+            else:
+                self.fc1 = WeightNorm(self.spatial_num_features + self.extra_info_num_features, fc1_dim)
+
+
         if self.bn:
             self.bn1   = nn.BatchNorm1d(fc1_dim)
         self.gru = nn.GRUCell(input_size=fc1_dim, hidden_size=hidden_size)
-        self.fc3   = nn.Linear(hidden_size, self.action_size)
+        if not self.wn:
+            self.fc3   = nn.Linear(hidden_size, action_size) # an affine operation: y = Wx + b
+        else:
+            self.fc3   = WeightNorm(hidden_size, action_size)
         self.update_mask()
+        #import ipdb; ipdb.set_trace()
 
     def update_mask(self, actions=None):
         if actions is None:
@@ -321,25 +351,126 @@ class RecurrentNet2(BaseModule):
         for a in actions:
             try: self.mask[a, a] = 1
             except IndexError:
-                import ipdb; ipdb.set_trace()
                 print("Warning: tried to allow an out-of-bounds action: {}".format(a))
         self.allowed_actions = actions
 
 
-    def forward(self, x, h, advice=None):
-        x = x.view(-1, self.num_flat_features(x))
-        if advice is not None:
-            advice = advice.view(-1, self.num_flat_features(advice))
-            x = torch.cat([x, advice], 1)
-        if self.bn:
-            x = F.relu(self.bn1(self.fc1(x)))
+    def forward(self, h, state_dict):
+        spatial_info = state_dict["spatial"].view(-1, self.spatial_num_features)
+        extra_info = torch.cat([state.view(-1, self.num_flat_features(state)) for key, state in state_dict.items() if key != "spatial"], 1)
+
+        if self.use_dict:
+            if self.aggregate:
+                state_dict = {"spatial": spatial_info, "extra_info": extra_info}
+            x = self.fc1(state_dict)
         else:
-            x = F.relu(self.fc1(x))
+            x = torch.cat([spatial_info, extra_info], 1)
+            x = self.fc1(x)
+        if self.bn:
+            x = F.relu(self.bn1(x))
+        else:
+            x = F.relu(x)
         h = self.gru(x, h)
         output = self.fc3(h)
         if self.softmax:
             output = F.softmax(output / self.temperature)
         return output, h
+
+class Bias(BaseModule):
+    def __init__(self, out_size, initial_bias=0.1):
+        super().__init__()
+        self.bias = nn.Parameter(torch.zeros(1, out_size).fill_(initial_bias))
+
+    def forward(self, x):
+        return x + self.bias.expand_as(x)
+    def __init__(self, out_size, initial_scale=1):
+        super().__init__()
+        self.scale = nn.Parameter(torch.ones(1, out_size).fill_(initial_scale))
+
+    def forward(self, x):
+        return x * self.scale.expand_as(x)
+
+
+class Matrix(BaseModule):
+    def __init__(self, in_size, out_size, std=1.0):
+        super().__init__()
+        self.matrix = nn.Parameter(torch.randn(in_size, out_size) * std)
+
+    def forward(self, x):
+        return torch.mm(x, self.matrix)
+
+
+class WeightNorm(BaseModule):
+    def __init__(self, in_size, out_size, xavier=True):
+        super().__init__()
+        self.v = Matrix(in_size, out_size)
+        if xavier:
+            scale = 2 / (in_size)
+        else:
+            scale = 0.1
+        self.s = Scale(out_size, initial_scale=scale)
+        self.b = Bias(out_size, initial_bias=0.1)
+
+    def forward(self, x):
+        x = x.view(-1, self.num_flat_features(x))
+        x = self.v(x)
+        x = x / torch.norm(self.v.matrix, 2, 0).expand_as(x)
+        x = self.s(x)
+        x = self.b(x)
+        return x
+
+
+class WeightNormDict(BaseModule):
+    def __init__(self, in_dict, out_size):
+        super().__init__()
+        modules = list()
+        self.param_keys = list()
+        for key, size in in_dict.items():
+            if type(size) is not int:
+                size = np.prod(size).item()
+            v = Matrix(size, out_size, std=0.05)
+            modules.append(v)
+            self.param_keys.append(key)
+        self.params = nn.ModuleList(modules)
+        self.s1 = Scale(out_size, ini)
+        self.b1 = Bias(out_size)
+
+    def forward(self, state_dict):
+        x = 0.
+        v_all = torch.cat([v.matrix for v in self.params], 0)
+        for idx, v in enumerate(self.params):
+            key = self.param_keys[idx]
+            state = state_dict[key]
+            temp = state.view(-1, self.num_flat_features(state))
+            temp = v(temp)
+            x = x + temp
+        x = x / torch.norm(v_all, 2, 0).expand_as(x)
+        x = self.s1(x)
+        x = self.b1(x)
+        return x
+
+
+class LinearDict(BaseModule):
+    def __init__(self, in_dict, out_size):
+        super().__init__()
+        modules = list()
+        self.param_keys = list()
+        for key, size in in_dict.items():
+            if type(size) is not int:
+                size = np.prod(size).item()
+            std = ((2 / out_size)**0.5)
+            modules.append(Matrix(size, out_size, std=std))
+            self.param_keys.append(key)
+        self.bias = Bias(out_size)
+
+        self.params = nn.ModuleList(modules)
+
+    def forward(self, state_dict):
+        x = torch.cat([state_dict[param_key].view(-1, self.num_flat_features(state_dict[param_key])) for param_key in self.param_keys], 1)
+        weight = torch.cat([weight.matrix for weight in self.params], 0)
+        x = torch.mm(x, weight)
+        x = self.bias(x)
+        return x
 
 
 class AgentNet(ActionModule):
@@ -445,6 +576,6 @@ class RecurrentModel(Model):
         self.h.data.zero_()
         self.h = Variable(self.h.data)
 
-    def forward(self, x, advice=None):
-        output, self.h = self.neural_net(x, self.h, advice)
+    def forward(self, state_dict):
+        output, self.h = self.neural_net(self.h, state_dict)
         return output
