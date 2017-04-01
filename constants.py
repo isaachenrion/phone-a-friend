@@ -3,7 +3,7 @@ import torch
 class MazeConstants:
 
     #### REWARDS ####
-    TIME_INCENTIVE = -0.0
+    TIME_INCENTIVE = -0.00
     BUMP= -0.1
     MOVE= 0.
     REST= -0.1
@@ -11,7 +11,7 @@ class MazeConstants:
     APPLE= 2
     ORANGE= 5
     PEAR= 10
-    QUIT= 1
+    QUIT= 0.0
     CALL_COST=-0.1
     SENSOR_COST = -0.1
     REWARD_STD=0.0
@@ -28,10 +28,10 @@ class MazeConstants:
     [1, 0, 1, 0, 1, 0, 0, 1],
     [1, 1, 1, 1, 1, 1, 1, 1]]).float()
     EXITS = torch.zeros(WALLS.size()).float()
-    EXITS[6, 1] = 1
     APPLES = torch.zeros(WALLS.size()).float()
     ORANGES = torch.zeros(WALLS.size()).float()
     PEARS = torch.zeros(WALLS.size()).float()
+    ZEROS = torch.zeros(WALLS.size()).float()
     REGENERATE = False
     START_POSITION = None
     RANDOM_ITEMS = None
@@ -42,7 +42,7 @@ class MazeConstants:
     CONSTANT_ADVICE = False
     ACT_ON_ADVICE = False
     EXPERIMENTAL = True
-
+    GOAL_STATE = {"pears": ZEROS}
     COLLECTED_CONSTANTS = locals()
 
 class ExperimentConstants:

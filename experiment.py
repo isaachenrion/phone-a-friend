@@ -16,7 +16,7 @@ from constants import MazeConstants as MC
 import numpy as np
 
 class Experiment:
-    def __init__(self, policy, optimizer, envs, epsilon=None, n_train_steps=10000, eval_freq=10, save_freq=100, num_observations=1, args=None):
+    def __init__(self, policy, optimizer, envs, n_train_steps=10000, eval_freq=10, save_freq=100, args=None):
 
         self.envs = envs
         self.policy = policy
@@ -24,11 +24,7 @@ class Experiment:
         self.n_train_steps = n_train_steps
         self.eval_freq = eval_freq
         self.save_freq = save_freq
-        self.epsilon = epsilon
-        self.num_observations = num_observations
         self.args = args
-        self.training_actions = [a for a in range(policy.action_space.n)]
-        self.evaluation_actions = [a for a in range(MC.NUM_BASIC_ACTIONS)]
         self.do_admin()
 
     def do_admin(self):
@@ -54,7 +50,6 @@ class Experiment:
             write_and_log("save_freq", self.save_freq, f, log)
             write_and_log("model_file", self.model_file, f, log)
             write_and_log('optimizer', self.optimizer, f, log)
-            write_and_log('num_observations', self.num_observations, f, log)
             write_and_log("env_name", self.envs[0].__class__.__name__, f, log)
             #for idx, friend in enumerate(self.envs[0].friends):
             #    write_and_log("Friend{}".format(idx + 1), friend.action_model.filename, f, log)
@@ -96,8 +91,6 @@ class Experiment:
     def print_train(self):
         out_str = 'Training statistics:\n'
         out_str += "Reward = {:.4f} (length = {})".format(self.log.get_last_dynamic_value("avg_total_reward"),self.log.get_last_dynamic_value("avg_length"))
-        if self.args.debug:
-            out_str += "\nQuery percentage: {}".format(self.log.get_last_dynamic_value("avg_queries"))
 
         if self.policy.baseline_model is not None:
             out_str += "\nBaseline loss = {}".format(self.log.get_last_dynamic_value("baseline_loss"))
@@ -111,7 +104,7 @@ class Experiment:
         out_str = "Evaluation after {} training episodes\nAvg reward = {}".format((step) * len(self.envs), self.log.get_last_dynamic_value("avg_total_reward", eval_mode=True))
         action_breakdown = self.log.get_last_dynamic_value("action_breakdown", eval_mode=True)
         for idx, value in enumerate(action_breakdown):
-            out_str += "\nAction {} percentage: {}".format(idx, value)
+            out_str += "\nAction {} percentage: {:.3f}".format(idx, value)
         out_str += '\n'
         self.superprint(out_str, self.exp_log)
 
@@ -125,7 +118,7 @@ class Experiment:
         shutil.rmtree(self.experiment_dir)
 
     def train(self, step, learning_algorithm):
-        self.policy.train_mode(max(1, C.TRAIN_TEMPERATURE ** (1 - (step / self.n_train_steps))), self.training_actions)
+        self.policy.train_mode(max(1, C.TRAIN_TEMPERATURE ** (1 - (step / self.n_train_steps))))
         learning_algorithm.step(envs=self.envs,discount_factor=0.95,maximum_episode_length=C.EPISODE_LENGTH)
         if step % self.eval_freq == 0:
             self.print_train()
@@ -133,7 +126,7 @@ class Experiment:
             self.log.log()
 
     def evaluate(self, step, learning_algorithm):
-        self.policy.eval_mode(1, self.evaluation_actions)
+        self.policy.eval_mode(1)
         _=rl_evaluate_policy_multiple_times(self.envs[0],self.log,self.policy,C.EPISODE_LENGTH,1.0,10)
         self.print_eval(step)
         if step > 0:
@@ -145,12 +138,14 @@ class Experiment:
             learning_algorithm=learners.LearnerBatchPolicyGradient(
                                     action_space=self.envs[0].action_space,
                                     log=self.log,
-                                    average_reward_window=10,
                                     policy=self.policy,
                                     optimizer=self.optimizer,
-                                    epsilon=self.epsilon,
                                     observation_shapes=self.envs[0].world.state_size_dict,
-                                    args=self.args)
+                                    envs=self.envs,
+                                    maximum_episode_length=C.EPISODE_LENGTH,
+                                    discount_factor=0.95,
+                                    entropy_term=self.args.entropy_term,
+                                    extra_args=self.args)
             learning_algorithm.reset()
 
             for step in range(0, self.n_train_steps):
@@ -162,6 +157,7 @@ class Experiment:
                 if step == 0:
                     self.log.create_summaries()
 
+            learning_algorithm.done()
             self.save_everything()
             print("Finished training!")
 

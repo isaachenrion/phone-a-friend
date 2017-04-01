@@ -8,17 +8,19 @@ from torch_rl.learners import TFLog as Log
 import torch_rl.learners as learners
 import torch_rl.core as core
 from torch_rl.tools import rl_evaluate_policy, rl_evaluate_policy_multiple_times
-from torch_rl.policies import DiscreteModelPolicy, DiscreteEpsilonGreedyPolicy
+from torch_rl.policies import DiscreteModelPolicy, DiscreteEpsilonGreedyPolicy, CollectionOfPolicies
 from gym.spaces import Discrete
 from model_zoo import *
 from constants import ExperimentConstants as C
 from constants import MazeConstants as MC
 from experiment import Experiment
-from environments.maze import PolicySensor, RewardSensor
+from environments.maze.sensor import PolicySensor, RewardSensor
+from environments.maze.agent import Subordinate
+import multiprocessing
 import argparse
 
 parser = argparse.ArgumentParser(description='Phone a friend')
-parser.add_argument('--batch_size', type=int, default=100, metavar='N',
+parser.add_argument('--batch_size', type=int, default=10, metavar='N',
                     help='input batch size for training (default: 100)')
 parser.add_argument('--env', '-m', type=int, default=0,
                     help='index of environment (default = 0)')
@@ -32,23 +34,41 @@ parser.add_argument('--entropy_term', '-z', type=float, default=1)
 parser.add_argument('--clip', '-c', type=float, default=1.0)
 parser.add_argument('--use_policy_sensors', '-p', action='store_true')
 parser.add_argument('--use_reward_sensors', '-r', action='store_true')
+parser.add_argument('--use_subordinates', '-s', action='store_true')
 parser.add_argument('--epsilon', '-e', type=float, default=0.0)
 parser.add_argument('--load', '-l', type=str, default=None)
 parser.add_argument('--no_bn', action='store_true')
 parser.add_argument('--wn', action='store_true')
+parser.add_argument('--mp', action='store_true')
+
 args = parser.parse_args()
 args.bn = not args.no_bn
 args.recurrent = not args.ff
+args.multiprocessing = args.mp
 
 def main():
     '''LOAD FRIENDS'''
     active_sensors = [None] * args.batch_size
+    subordinates_batch = [None] * args.batch_size
     for idx in range(args.batch_size):
+        subordinates = {}
+        if args.use_subordinates:
+            model_strs = []
+            model_strs.append('Mar-27___12-12-19-RandomPear-recurrent') # BAD PEAR
+            #model_strs.append('Mar-24___16-14-48-RandomPear-recurrent') # GOOD PEAR
+            for s in model_strs:
+                subordinates[s] = Subordinate(s)
+                if idx == 0:
+                    print("Loaded subordinate: {}".format(s))
+        num_subordinates = len(subordinates)
+        if num_subordinates > 0:
+            subordinates_batch[idx] = subordinates
+
         policy_sensors = []
         if args.use_policy_sensors:
             model_strs = []
-            #model_strs.append('Mar-22___16-15-34-RandomPear-recurrent') # BAD PEAR
-            model_strs.append('Mar-23___14-13-58-RandomPear-recurrent') # GOOD PEAR
+            #model_strs.append('Mar-23___14-33-50-RandomPear-recurrent') # BAD PEAR
+            model_strs.append('Mar-24___16-14-48-RandomPear-recurrent') # GOOD PEAR
             for s in model_strs:
                 policy_sensors.append(PolicySensor(s))
                 if idx == 0:
@@ -62,27 +82,35 @@ def main():
                 if idx == 0:
                     print("Loaded reward sensor: {}".format(s))
 
-        num_active_sensors = len(policy_sensors) + len(reward_sensors)
         if idx == 0:
+            num_active_sensors = len(policy_sensors) + len(reward_sensors)
             print("Total number of active sensors: {}".format(num_active_sensors))
         if num_active_sensors > 0:
             active_sensors[idx] = policy_sensors + reward_sensors
-        else:
-            active_sensors[idx] = None
 
     ''' LOAD ENVIRONMENTS '''
     print("Creating %d environments" % args.batch_size)
-    from environments.env_list import ENVS
+    from environments.maze.env_list import ENVS
     Env = ENVS[args.env]
     print("Environment: {}".format(Env.__name__))
 
+    #allowed_actions = range(MC.NUM_BASIC_ACTIONS + num_active_sensors + num_subordinates)
+    policy_dict = {}
+    model_strs = []
+    #model_strs.append('Mar-23___14-33-50-RandomPear-recurrent') # BAD PEAR
+    #model_strs.append('Mar-27___14-26-20-RandomPear-recurrent') # GOOD PEAR
 
-    #import ipdb; ipdb.set_trace()
-    #allowed_actions=[5, 6, 7]
-    allowed_actions = range(MC.NUM_BASIC_ACTIONS + num_active_sensors)
-    envs=[Env(active_sensors=active_sensors[idx]) for idx in range(args.batch_size)]
+    for s in model_strs:
+        print("Loading model: {}".format(s))
+        filename = os.path.join(C.WORKING_DIR, 'experiments', s, s + '.ckpt')
+        model = RecurrentModel(1, torch.load(filename), filename)
+        policy_dict[s] = DiscreteModelPolicy(model, stochastic=True, baseline_model=None, batch_size=args.batch_size)
+
+    envs=[Env(active_sensors=active_sensors[idx], subordinates=model_strs, seed=idx) for idx in range(args.batch_size)]
 
     A = envs[0].action_space.n
+    action_types = envs[0].world.agent.action_types
+    goal_state = envs[0].reward.goal_state
     try:
         E = sum([sensor.shape for sensor in envs[0].world.agent.sensors])
 
@@ -93,48 +121,48 @@ def main():
     state_size_dict = envs[0].world.state_size_dict
 
     print("Number of Actions is: {}".format(A))
-    print("Spatial state size is {} x {} x {}".format(*state_size_dict["spatial"]))
 
     ''' BUILD MODEL '''
 
-    num_observations = 1 + (E is not None)
+    if args.multiprocessing:
+        bs = 1
+    else: bs = args.batch_size
 
-    if MC.EXPERIMENTAL:
-        baseline_net = RecurrentNet2(input_size_dict=state_size_dict, hidden_size=20, action_size=1, softmax=False, bn=args.bn, wn=args.wn)
-        baseline_model = RecurrentModel(args.batch_size, baseline_net)
-    else:
-        baseline_net = BaselineNet(state_size)
-        baseline_model = Model(args.batch_size, baseline_net)
+    baseline_net = RecurrentNet2(input_size_dict=state_size_dict, hidden_size=20, action_types=["value"], softmax=False, bn=args.bn, wn=args.wn)
+    baseline_model = RecurrentModel(bs, baseline_net)
+    #baseline_model= None
 
-    if args.recurrent:
-        action_net = RecurrentNet2(hidden_size=50, input_size_dict=state_size_dict, action_size=A, bn=args.bn, wn=args.wn)
+    _action_net = RecurrentNet2(hidden_size=50, input_size_dict=state_size_dict, action_types=action_types, goal_state=goal_state, bn=args.bn, wn=args.wn)
+    _action_model = RecurrentModel(bs, _action_net)
 
-        action_model = RecurrentModel(args.batch_size, action_net)
-    else:
-        raise ValueError("MUST CHANGE FCNET IMPLEMENTATION")
-        action_net = FCNet(input_size=state_size, action_size=A, n_friends=len(friends), bn=args.bn)
-        action_model = Model(args.batch_size, action_net)
 
     if args.load is not None:
         print("Loading model: {}".format(args.load))
         filename = os.path.join(C.WORKING_DIR, 'experiments', args.load, args.load + '.ckpt')
-        if args.recurrent:
-            action_model = RecurrentModel(1, torch.load(filename), filename)
-        else:
-            action_model = Model(1, torch.load(filename), filename)
+        _action_net = torch.load(filename)
 
-    print("Action model: {}".format(action_net))
+        _action_model = RecurrentModel(1, _action_net, filename)
+
+    if MC.EXPERIMENTAL and False:
+        policy = DiscreteModelPolicy(_action_model, stochastic=True, baseline_model=baseline_model)
+        policy_dict["main_policy"] = policy
+        policy = CollectionOfPolicies(policy_dict, envs)
+    else:
+        action_model = _action_model
+        policy = DiscreteModelPolicy(action_model, stochastic=True, baseline_model=baseline_model)
+
+
+    print("Action model: {}".format(_action_net))
     print("Baseline model: {}".format(baseline_net))
 
-    policy = DiscreteModelPolicy(envs[0].action_space, action_model, stochastic=True, allowed_actions=allowed_actions, baseline_model=baseline_model)
-    #policy = DiscreteEpsilonGreedyPolicy(envs[0].action_space, epsilon=args.epsilon, policy=policy)
     optimizer= optim.Adam(policy.parameters(), lr=args.lr)
     #optimizer= optim.RMSprop(policy.parameters(), lr=args.lr)
-    #optimizer = optim.SGD(policy.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
 
     ''' RUN EXPERIMENT '''
     print("Running experiment...")
-    experiment = Experiment(policy, optimizer, envs, n_train_steps=1000, eval_freq=10, save_freq=50, num_observations=num_observations, args=args)
+    print("There are {} CPUs on this machine".format(multiprocessing.cpu_count()))
+    experiment = Experiment(policy, optimizer, envs, n_train_steps=1000, eval_freq=10, save_freq=50, args=args)
     experiment._run()
 
-main()
+if __name__ == "__main__":
+    main()

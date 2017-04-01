@@ -1,14 +1,5 @@
-import sys, os
-sys.path.insert(0, os.path.abspath('..'))
-sys.path.insert(0, os.path.abspath('../..'))
-try:
-    from maze.maze_env import MazeEnv
-    from .utils import tensor_from_list
-except ImportError:
-    from maze.maze_env import MazeEnv
-    from utils import tensor_from_list
 import torch
-
+from .maze_env import MazeEnv
 from constants import MazeConstants as C
 
 class Basic(MazeEnv):
@@ -114,7 +105,7 @@ class RandomOrange(RandomFruit):
 
 class RandomPear(RandomFruit):
     def __init__(self, **kwargs):
-        random_items=[0, 0, 2]
+        random_items=[0, 0, 1]
         reward_dict = {
         'goal_state': {"pears": C.ZEROS}
         }
